@@ -97,9 +97,10 @@ mod multi_collector;
 pub use self::multi_collector::MultiCollector;
 
 mod top_collector;
+pub use self::top_collector::{ComparableDoc, TopCollector, TopSegmentCollector};
 
 mod top_score_collector;
-pub use self::top_score_collector::TopDocs;
+pub use self::top_score_collector::{TopDocs, TopScoreSegmentCollector};
 
 mod custom_score_top_collector;
 pub use self::custom_score_top_collector::{CustomScorer, CustomSegmentScorer};

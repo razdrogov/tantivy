@@ -18,7 +18,7 @@ use std::collections::BinaryHeap;
 /// Two elements are equal if their feature is equal, and regardless of whether `doc`
 /// is equal. This should be perfectly fine for this usage, but let's make sure this
 /// struct is never public.
-pub(crate) struct ComparableDoc<T, D> {
+pub struct ComparableDoc<T, D> {
     pub feature: T,
     pub doc: D,
 }
@@ -55,7 +55,7 @@ impl<T: PartialOrd, D: PartialOrd> PartialEq for ComparableDoc<T, D> {
 
 impl<T: PartialOrd, D: PartialOrd> Eq for ComparableDoc<T, D> {}
 
-pub(crate) struct TopCollector<T> {
+pub struct TopCollector<T> {
     pub limit: usize,
     pub offset: usize,
     _marker: PhantomData<T>,
@@ -116,7 +116,7 @@ where
             .collect())
     }
 
-    pub(crate) fn for_segment<F: PartialOrd>(
+    pub fn for_segment<F: PartialOrd>(
         &self,
         segment_id: SegmentLocalId,
         _: &SegmentReader,
@@ -147,7 +147,7 @@ where
 /// The implementation is based on a `BinaryHeap`.
 /// The theorical complexity for collecting the top `K` out of `n` documents
 /// is `O(n log K)`.
-pub(crate) struct TopSegmentCollector<T> {
+pub struct TopSegmentCollector<T> {
     limit: usize,
     heap: BinaryHeap<ComparableDoc<T, DocId>>,
     segment_id: u32,
