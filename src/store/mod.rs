@@ -134,6 +134,41 @@ pub mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn test_iteration() {
+        let path = Path::new("store");
+        let mut directory = RAMDirectory::create();
+        let store_file = directory.open_write(path).unwrap();
+        let schema = write_lorem_ipsum_store(store_file, 100);
+        let field_title = schema.get_field("title").unwrap();
+        let store_source = directory.open_read(path).unwrap();
+        let store = StoreReader::open(store_source).unwrap();
+        let mut last_doc_id = 0;
+        for (i, doc) in store.into_iter().enumerate() {
+            assert_eq!(
+                *doc.get_first(field_title)
+                    .unwrap()
+                    .text()
+                    .unwrap(),
+                format!("Doc {}", i)
+            );
+            last_doc_id = i;
+        }
+        assert_eq!(last_doc_id, 99);
+    }
+
+    #[test]
+    fn test_empty_iterator() {
+        let path = Path::new("store");
+        let mut directory = RAMDirectory::create();
+        let store_file = directory.open_write(path).unwrap();
+        let schema = write_lorem_ipsum_store(store_file, 0);
+        let store_source = directory.open_read(path).unwrap();
+        let store = StoreReader::open(store_source).unwrap();
+        let docs: Vec<Document> = store.into_iter().collect();
+        assert_eq!(docs.len(), 0);
+    }
 }
 
 #[cfg(all(test, feature = "unstable"))]

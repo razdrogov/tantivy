@@ -305,7 +305,7 @@ impl Index {
 
     /// Helper to create an index writer for tests.
     ///
-    /// That index writer only simply has a single thread and a heap of 5 MB.
+    /// That index writer only simply has a single thread and a heap of 10 MB.
     /// Using a single thread gives us a deterministic allocation of DocId.
     #[cfg(test)]
     pub fn writer_for_tests(&self) -> crate::Result<IndexWriter> {
