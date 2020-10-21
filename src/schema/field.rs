@@ -1,4 +1,5 @@
 use crate::common::BinarySerializable;
+use crate::common::VInt;
 use std::io;
 use std::io::Read;
 use std::io::Write;
@@ -25,10 +26,10 @@ impl Field {
 
 impl BinarySerializable for Field {
     fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        self.0.serialize(writer)
+        VInt(self.0.into()).serialize(writer)
     }
 
     fn deserialize<R: Read>(reader: &mut R) -> io::Result<Field> {
-        u32::deserialize(reader).map(Field)
+        VInt::deserialize(reader).map(|x| Field(x.0 as u32))
     }
 }
