@@ -82,7 +82,7 @@ impl FileSlice {
 
     /// Creates an empty FileSlice
     pub fn empty() -> FileSlice {
-        const EMPTY_SLICE: &'static [u8] = &[];
+        const EMPTY_SLICE: &[u8] = &[];
         FileSlice::from(EMPTY_SLICE)
     }
 
