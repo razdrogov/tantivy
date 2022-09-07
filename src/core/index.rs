@@ -5,11 +5,14 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde::Serialize;
+
 use super::segment::Segment;
 use super::IndexSettings;
 use crate::core::single_segment_index_writer::SingleSegmentIndexWriter;
 use crate::core::{
-    Executor, IndexMeta, SegmentId, SegmentMeta, SegmentMetaInventory, META_FILEPATH,
+    Executor, IndexMeta, SegmentAttributesMerger, SegmentId, SegmentMeta, SegmentMetaInventory,
+    META_FILEPATH,
 };
 use crate::directory::error::OpenReadError;
 #[cfg(feature = "mmap")]
@@ -23,11 +26,7 @@ use crate::schema::{Field, FieldType, Schema};
 use crate::tokenizer::{TextAnalyzer, TokenizerManager};
 use crate::IndexWriter;
 
-fn load_metas(
-    directory: &dyn Directory,
-    inventory: &SegmentMetaInventory,
-) -> crate::Result<IndexMeta> {
-    let meta_data = directory.atomic_read(&META_FILEPATH)?;
+fn parse_metas(meta_data: Vec<u8>, inventory: &SegmentMetaInventory) -> crate::Result<IndexMeta> {
     let meta_string = String::from_utf8(meta_data).map_err(|_utf8_err| {
         error!("Meta data is not valid utf8.");
         DataCorruption::new(
@@ -48,6 +47,23 @@ fn load_metas(
         .map_err(From::from)
 }
 
+fn load_metas(
+    directory: &dyn Directory,
+    inventory: &SegmentMetaInventory,
+) -> crate::Result<IndexMeta> {
+    let meta_data = directory.atomic_read(&META_FILEPATH)?;
+    parse_metas(meta_data, inventory)
+}
+
+#[cfg(feature = "quickwit")]
+async fn load_metas_async(
+    directory: &dyn Directory,
+    inventory: &SegmentMetaInventory,
+) -> crate::Result<IndexMeta> {
+    let meta_data = directory.atomic_read_async(&META_FILEPATH).await?;
+    parse_metas(meta_data, inventory)
+}
+
 /// Save the index meta file.
 /// This operation is atomic :
 /// Either
@@ -60,6 +76,7 @@ fn load_metas(
 fn save_new_metas(
     schema: Schema,
     index_settings: IndexSettings,
+    attributes: Option<serde_json::Value>,
     directory: &dyn Directory,
 ) -> crate::Result<()> {
     save_metas(
@@ -69,10 +86,10 @@ fn save_new_metas(
             schema,
             opstamp: 0u64,
             payload: None,
+            index_attributes: attributes,
         },
         directory,
     )?;
-    directory.sync_directory()?;
     Ok(())
 }
 
@@ -108,6 +125,7 @@ fn save_new_metas(
 /// ```
 pub struct IndexBuilder {
     schema: Option<Schema>,
+    index_attributes: Option<serde_json::Value>,
     index_settings: IndexSettings,
     tokenizer_manager: TokenizerManager,
 }
@@ -121,6 +139,7 @@ impl IndexBuilder {
     pub fn new() -> Self {
         Self {
             schema: None,
+            index_attributes: None,
             index_settings: IndexSettings::default(),
             tokenizer_manager: TokenizerManager::default(),
         }
@@ -137,6 +156,12 @@ impl IndexBuilder {
     #[must_use]
     pub fn schema(mut self, schema: Schema) -> Self {
         self.schema = Some(schema);
+        self
+    }
+
+    /// Set the schema
+    pub fn index_attributes<A: Serialize>(mut self, attributes: A) -> Self {
+        self.index_attributes = Some(serde_json::to_value(attributes).expect("cannot serialize"));
         self
     }
 
@@ -264,10 +289,12 @@ impl IndexBuilder {
         save_new_metas(
             self.get_expect_schema()?,
             self.index_settings.clone(),
+            self.index_attributes.clone(),
             &directory,
         )?;
         let mut metas = IndexMeta::with_schema(self.get_expect_schema()?);
         metas.index_settings = self.index_settings;
+        metas.index_attributes = self.index_attributes;
         let mut index = Index::open_from_metas(directory, &metas, SegmentMetaInventory::default());
         index.set_tokenizers(self.tokenizer_manager);
         Ok(index)
@@ -283,6 +310,7 @@ pub struct Index {
     executor: Arc<Executor>,
     tokenizers: TokenizerManager,
     inventory: SegmentMetaInventory,
+    segment_attributes_merger: Option<Arc<dyn SegmentAttributesMerger>>,
 }
 
 impl Index {
@@ -396,7 +424,21 @@ impl Index {
             tokenizers: TokenizerManager::default(),
             executor: Arc::new(Executor::single_thread()),
             inventory,
+            segment_attributes_merger: None,
         }
+    }
+
+    /// Create and set an instance of SegmentAttributes
+    pub fn set_segment_attributes_merger(
+        &mut self,
+        segment_attributes_merger: Arc<dyn SegmentAttributesMerger>,
+    ) {
+        self.segment_attributes_merger = Some(segment_attributes_merger);
+    }
+
+    /// Accessor for SegmentAttributes
+    pub fn segment_attributes_merger(&self) -> Option<&dyn SegmentAttributesMerger> {
+        self.segment_attributes_merger.as_deref()
     }
 
     /// Setter for the tokenizer manager.
@@ -477,8 +519,14 @@ impl Index {
     /// As long as the `SegmentMeta` lives, the files associated with the
     /// `SegmentMeta` are guaranteed to not be garbage collected, regardless of
     /// whether the segment is recorded as part of the index or not.
-    pub fn new_segment_meta(&self, segment_id: SegmentId, max_doc: u32) -> SegmentMeta {
-        self.inventory.new_segment_meta(segment_id, max_doc)
+    pub fn new_segment_meta(
+        &self,
+        segment_id: SegmentId,
+        max_doc: u32,
+        segment_attributes: Option<serde_json::Value>,
+    ) -> SegmentMeta {
+        self.inventory
+            .new_segment_meta(segment_id, max_doc, segment_attributes)
     }
 
     /// Open the index using the provided directory
@@ -605,9 +653,13 @@ impl Index {
 
     /// Creates a new segment.
     pub fn new_segment(&self) -> Segment {
-        let segment_meta = self
-            .inventory
-            .new_segment_meta(SegmentId::generate_random(), 0);
+        let segment_meta = self.inventory.new_segment_meta(
+            SegmentId::generate_random(),
+            0,
+            self.segment_attributes_merger
+                .as_ref()
+                .map(|segment_attributes_merger| segment_attributes_merger.default()),
+        );
         self.segment(segment_meta)
     }
 
@@ -654,6 +706,55 @@ impl Index {
             }
         }
         Ok(damaged_files)
+    }
+}
+
+#[cfg(feature = "quickwit")]
+impl Index {
+    pub async fn load_metas_async(&self) -> crate::Result<IndexMeta> {
+        load_metas_async(self.directory(), &self.inventory).await
+    }
+
+    pub async fn searchable_segments_async(&self) -> crate::Result<Vec<Segment>> {
+        Ok(self
+            .searchable_segment_metas_async()
+            .await?
+            .into_iter()
+            .map(|segment_meta| self.segment(segment_meta))
+            .collect())
+    }
+
+    pub async fn searchable_segment_metas_async(&self) -> crate::Result<Vec<SegmentMeta>> {
+        Ok(self.load_metas_async().await?.segments)
+    }
+
+    pub async fn writer_with_num_threads_async(
+        &self,
+        num_threads: usize,
+        overall_memory_arena_in_bytes: usize,
+    ) -> crate::Result<IndexWriter> {
+        let directory_lock = self
+            .directory
+            .acquire_lock(&INDEX_WRITER_LOCK)
+            .map_err(|err| {
+                TantivyError::LockFailure(
+                    err,
+                    Some(
+                        "Failed to acquire index lock. If you are using a regular directory, this \
+                         means there is already an `IndexWriter` working on this `Directory`, in \
+                         this process or in a different process."
+                            .to_string(),
+                    ),
+                )
+            })?;
+        let memory_arena_in_bytes_per_thread = overall_memory_arena_in_bytes / num_threads;
+        IndexWriter::new_async(
+            self,
+            num_threads,
+            memory_arena_in_bytes_per_thread,
+            directory_lock,
+        )
+        .await
     }
 }
 

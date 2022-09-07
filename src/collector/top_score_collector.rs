@@ -3,6 +3,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use columnar::ColumnValues;
 
 use super::Collector;
@@ -145,6 +146,7 @@ struct ScorerByField {
     field: String,
 }
 
+#[async_trait]
 impl CustomScorer<u64> for ScorerByField {
     type Child = ScorerByFastFieldReader;
 
@@ -487,7 +489,7 @@ impl TopDocs {
     ) -> impl Collector<Fruit = Vec<(TScore, DocAddress)>>
     where
         TScore: 'static + Send + Sync + Clone + PartialOrd,
-        TScoreSegmentTweaker: ScoreSegmentTweaker<TScore> + 'static,
+        TScoreSegmentTweaker: ScoreSegmentTweaker<TScore> + 'static + Send,
         TScoreTweaker: ScoreTweaker<TScore, Child = TScoreSegmentTweaker> + Send + Sync,
     {
         TweakedScoreTopCollector::new(score_tweaker, self.0.into_tscore())
@@ -600,13 +602,14 @@ impl TopDocs {
     ) -> impl Collector<Fruit = Vec<(TScore, DocAddress)>>
     where
         TScore: 'static + Send + Sync + Clone + PartialOrd,
-        TCustomSegmentScorer: CustomSegmentScorer<TScore> + 'static,
+        TCustomSegmentScorer: CustomSegmentScorer<TScore> + Send + 'static,
         TCustomScorer: CustomScorer<TScore, Child = TCustomSegmentScorer> + Send + Sync,
     {
         CustomScoreTopCollector::new(custom_score, self.0.into_tscore())
     }
 }
 
+#[async_trait]
 impl Collector for TopDocs {
     type Fruit = Vec<(Score, DocAddress)>;
 
@@ -680,6 +683,77 @@ impl Collector for TopDocs {
                 *heap.peek_mut().unwrap() = heap_item;
                 heap.peek().map(|el| el.feature).unwrap_or(Score::MIN)
             })?;
+        }
+
+        let fruit = heap
+            .into_sorted_vec()
+            .into_iter()
+            .map(|cid| {
+                (
+                    cid.feature,
+                    DocAddress {
+                        segment_ord,
+                        doc_id: cid.doc,
+                    },
+                )
+            })
+            .collect();
+        Ok(fruit)
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn collect_segment_async(
+        &self,
+        weight: &dyn Weight,
+        segment_ord: u32,
+        reader: &SegmentReader,
+    ) -> crate::Result<<Self::Child as SegmentCollector>::Fruit> {
+        let heap_len = self.0.limit + self.0.offset;
+        let mut heap: BinaryHeap<ComparableDoc<Score, DocId>> = BinaryHeap::with_capacity(heap_len);
+
+        if let Some(alive_bitset) = reader.alive_bitset() {
+            let mut threshold = Score::MIN;
+            weight
+                .for_each_pruning_async(threshold, reader, &mut |doc, score| {
+                    if alive_bitset.is_deleted(doc) {
+                        return threshold;
+                    }
+                    let heap_item = ComparableDoc {
+                        feature: score,
+                        doc,
+                    };
+                    if heap.len() < heap_len {
+                        heap.push(heap_item);
+                        if heap.len() == heap_len {
+                            threshold = heap.peek().map(|el| el.feature).unwrap_or(Score::MIN);
+                        }
+                        return threshold;
+                    }
+                    *heap.peek_mut().unwrap() = heap_item;
+                    threshold = heap.peek().map(|el| el.feature).unwrap_or(Score::MIN);
+                    threshold
+                })
+                .await?;
+        } else {
+            weight
+                .for_each_pruning_async(Score::MIN, reader, &mut |doc, score| {
+                    let heap_item = ComparableDoc {
+                        feature: score,
+                        doc,
+                    };
+                    if heap.len() < heap_len {
+                        heap.push(heap_item);
+                        // TODO the threshold is suboptimal for heap.len == heap_len
+                        if heap.len() == heap_len {
+                            return heap.peek().map(|el| el.feature).unwrap_or(Score::MIN);
+                        } else {
+                            return Score::MIN;
+                        }
+                    }
+                    *heap.peek_mut().unwrap() = heap_item;
+                    heap.peek().map(|el| el.feature).unwrap_or(Score::MIN)
+                })
+                .await?;
         }
 
         let fruit = heap
@@ -1049,24 +1123,6 @@ mod tests {
         let err = top_collector.for_segment(0, segment).err().unwrap();
         assert!(
             matches!(err, crate::TantivyError::SchemaError(msg) if msg == "Field \"size\" is not a fast field.")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_tweak_score_top_collector_with_offset() -> crate::Result<()> {
-        let index = make_index()?;
-        let field = index.schema().get_field("text").unwrap();
-        let query_parser = QueryParser::for_index(&index, vec![field]);
-        let text_query = query_parser.parse_query("droopy tax")?;
-        let collector = TopDocs::with_limit(2).and_offset(1).tweak_score(
-            move |_segment_reader: &SegmentReader| move |doc: DocId, _original_score: Score| doc,
-        );
-        let score_docs: Vec<(u32, DocAddress)> =
-            index.reader()?.searcher().search(&text_query, &collector)?;
-        assert_eq!(
-            score_docs,
-            vec![(1, DocAddress::new(0, 1)), (0, DocAddress::new(0, 0)),]
         );
         Ok(())
     }

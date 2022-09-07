@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+
 use crate::collector::top_collector::{TopCollector, TopSegmentCollector};
 use crate::collector::{Collector, SegmentCollector};
 use crate::{DocAddress, DocId, Result, Score, SegmentReader};
@@ -36,6 +38,7 @@ pub trait ScoreSegmentTweaker<TScore>: 'static {
 /// The `ScoreTweaker` itself does not make much of the computation itself.
 /// Instead, it helps constructing `Self::Child` instances that will compute
 /// the score at a segment scale.
+#[async_trait]
 pub trait ScoreTweaker<TScore>: Sync {
     /// Type of the associated [`ScoreSegmentTweaker`].
     type Child: ScoreSegmentTweaker<TScore>;
@@ -43,12 +46,16 @@ pub trait ScoreTweaker<TScore>: Sync {
     /// Builds a child tweaker for a specific segment. The child scorer is associated with
     /// a specific segment.
     fn segment_tweaker(&self, segment_reader: &SegmentReader) -> Result<Self::Child>;
+
+    async fn segment_tweaker_async(&self, segment_reader: &SegmentReader) -> Result<Self::Child>;
 }
 
+#[async_trait]
 impl<TScoreTweaker, TScore> Collector for TweakedScoreTopCollector<TScoreTweaker, TScore>
 where
     TScoreTweaker: ScoreTweaker<TScore> + Send + Sync,
     TScore: 'static + PartialOrd + Clone + Send + Sync,
+    <TScoreTweaker as ScoreTweaker<TScore>>::Child: Send,
 {
     type Fruit = Vec<(TScore, DocAddress)>;
 
@@ -60,6 +67,23 @@ where
         segment_reader: &SegmentReader,
     ) -> Result<Self::Child> {
         let segment_scorer = self.score_tweaker.segment_tweaker(segment_reader)?;
+        let segment_collector = self.collector.for_segment(segment_local_id, segment_reader);
+        Ok(TopTweakedScoreSegmentCollector {
+            segment_collector,
+            segment_scorer,
+        })
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn for_segment_async(
+        &self,
+        segment_local_id: u32,
+        segment_reader: &SegmentReader,
+    ) -> Result<Self::Child> {
+        let segment_scorer = self
+            .score_tweaker
+            .segment_tweaker_async(segment_reader)
+            .await?;
         let segment_collector = self.collector.for_segment(segment_local_id, segment_reader);
         Ok(TopTweakedScoreSegmentCollector {
             segment_collector,
@@ -89,7 +113,7 @@ impl<TSegmentScoreTweaker, TScore> SegmentCollector
     for TopTweakedScoreSegmentCollector<TSegmentScoreTweaker, TScore>
 where
     TScore: 'static + PartialOrd + Clone + Send + Sync,
-    TSegmentScoreTweaker: 'static + ScoreSegmentTweaker<TScore>,
+    TSegmentScoreTweaker: 'static + ScoreSegmentTweaker<TScore> + Send,
 {
     type Fruit = Vec<(TScore, DocAddress)>;
 
@@ -100,18 +124,6 @@ where
 
     fn harvest(self) -> Vec<(TScore, DocAddress)> {
         self.segment_collector.harvest()
-    }
-}
-
-impl<F, TScore, TSegmentScoreTweaker> ScoreTweaker<TScore> for F
-where
-    F: 'static + Send + Sync + Fn(&SegmentReader) -> TSegmentScoreTweaker,
-    TSegmentScoreTweaker: ScoreSegmentTweaker<TScore>,
-{
-    type Child = TSegmentScoreTweaker;
-
-    fn segment_tweaker(&self, segment_reader: &SegmentReader) -> Result<Self::Child> {
-        Ok((self)(segment_reader))
     }
 }
 

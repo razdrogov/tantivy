@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+
 use super::PhraseWeight;
 use crate::query::bm25::Bm25Weight;
 use crate::query::{EnableScoring, Query, Weight};
@@ -122,12 +124,57 @@ impl PhraseQuery {
     }
 }
 
+#[cfg(feature = "quickwit")]
+impl PhraseQuery {
+    pub(crate) async fn phrase_weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<PhraseWeight> {
+        let schema = enable_scoring.schema();
+        let field_entry = schema.get_field_entry(self.field);
+        let has_positions = field_entry
+            .field_type()
+            .get_index_record_option()
+            .map(IndexRecordOption::has_positions)
+            .unwrap_or(false);
+        if !has_positions {
+            let field_name = field_entry.name();
+            return Err(crate::TantivyError::SchemaError(format!(
+                "Applied phrase query on field {:?}, which does not have positions indexed",
+                field_name
+            )));
+        }
+        let terms = self.phrase_terms();
+        let bm25_weight_opt = match enable_scoring {
+            EnableScoring::Enabled(searcher) => {
+                Some(Bm25Weight::for_terms_async(searcher, &terms).await?)
+            }
+            EnableScoring::Disabled { .. } => None,
+        };
+        let mut weight = PhraseWeight::new(self.phrase_terms.clone(), bm25_weight_opt);
+        if self.slop > 0 {
+            weight.slop(self.slop);
+        }
+        Ok(weight)
+    }
+}
+
+#[async_trait]
 impl Query for PhraseQuery {
     /// Create the weight associated with a query.
     ///
     /// See [`Weight`].
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         let phrase_weight = self.phrase_weight(enable_scoring)?;
+        Ok(Box::new(phrase_weight))
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        let phrase_weight = self.phrase_weight_async(enable_scoring).await?;
         Ok(Box::new(phrase_weight))
     }
 

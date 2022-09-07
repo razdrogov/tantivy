@@ -4,8 +4,8 @@
 //! merging.
 
 use std::fmt::Debug;
-use std::rc::Rc;
 use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
 
 use super::agg_req::MetricAggregation;
 use super::agg_req_with_accessor::{
@@ -383,7 +383,7 @@ impl SegmentBucketResultCollector {
 #[derive(Clone)]
 pub(crate) struct BucketCount {
     /// The counter which is shared between the aggregations for one request.
-    pub(crate) bucket_count: Rc<AtomicU32>,
+    pub(crate) bucket_count: Arc<AtomicU32>,
     pub(crate) max_bucket_count: u32,
 }
 

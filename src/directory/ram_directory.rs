@@ -1,9 +1,11 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::io::{self, BufWriter, Cursor, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::{fmt, result};
 
+use async_trait::async_trait;
 use common::HasLen;
 use fail::fail_point;
 
@@ -173,6 +175,7 @@ impl RamDirectory {
     }
 }
 
+#[async_trait]
 impl Directory for RamDirectory {
     fn get_file_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>, OpenReadError> {
         let file_slice = self.open_read(path)?;
@@ -191,6 +194,11 @@ impl Directory for RamDirectory {
             })
         });
         self.fs.write().unwrap().delete(path)
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn delete_async(&self, path: &Path) -> result::Result<(), DeleteError> {
+        self.delete(path)
     }
 
     fn exists(&self, path: &Path) -> Result<bool, OpenReadError> {
@@ -228,6 +236,11 @@ impl Directory for RamDirectory {
         Ok(bytes.as_slice().to_owned())
     }
 
+    #[cfg(feature = "quickwit")]
+    async fn atomic_read_async(&self, path: &Path) -> Result<Vec<u8>, OpenReadError> {
+        self.atomic_read(path)
+    }
+
     fn atomic_write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         let path_buf = PathBuf::from(path);
         self.fs.write().unwrap().write(path_buf, data);
@@ -243,6 +256,13 @@ impl Directory for RamDirectory {
 
     fn sync_directory(&self) -> io::Result<()> {
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn real_directory(&self) -> &dyn Directory {
+        self
     }
 }
 

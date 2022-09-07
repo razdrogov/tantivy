@@ -192,3 +192,164 @@ impl FastFieldReaders {
         self.column(field_name)
     }
 }
+
+#[cfg(feature = "quickwit")]
+impl FastFieldReaders {
+    pub(crate) async fn typed_fast_field_reader_with_idx_async<TFastValue: FastValue>(
+        &self,
+        field_name: &str,
+        index: usize,
+    ) -> crate::Result<Arc<dyn Column<TFastValue>>> {
+        let field = self.schema.get_field(field_name)?;
+
+        let fast_field_slice = self.fast_field_data(field, index)?;
+        let bytes = fast_field_slice.read_bytes_async().await?;
+        let column = fastfield_codecs::open(bytes)?;
+        Ok(column)
+    }
+
+    pub(crate) async fn typed_fast_field_reader_async<TFastValue: FastValue>(
+        &self,
+        field_name: &str,
+    ) -> crate::Result<Arc<dyn Column<TFastValue>>> {
+        self.typed_fast_field_reader_with_idx_async(field_name, 0)
+            .await
+    }
+
+    pub(crate) async fn typed_fast_field_multi_reader_async<TFastValue: FastValue>(
+        &self,
+        field_name: &str,
+    ) -> crate::Result<MultiValuedFastFieldReader<TFastValue>> {
+        let idx_reader = self.typed_fast_field_reader(field_name)?;
+        let vals_reader = self
+            .typed_fast_field_reader_with_idx_async(field_name, 1)
+            .await?;
+        Ok(MultiValuedFastFieldReader::open(idx_reader, vals_reader))
+    }
+
+    /// Returns the `u64` fast field reader reader associated with `field`.
+    ///
+    /// If `field` is not a u64 fast field, this method returns an Error.
+    pub async fn u64_async(&self, field_name: &str) -> crate::Result<Arc<dyn Column<u64>>> {
+        self.check_type(
+            self.schema.get_field(field_name)?,
+            FastType::U64,
+            Cardinality::SingleValue,
+        )?;
+        self.typed_fast_field_reader_async(field_name).await
+    }
+
+    /// Returns the `i64` fast field reader reader associated with `field`.
+    ///
+    /// If `field` is not a i64 fast field, this method returns an Error.
+    pub async fn i64_async(&self, field_name: &str) -> crate::Result<Arc<dyn Column<i64>>> {
+        let field = self.schema.get_field(field_name)?;
+        self.check_type(field, FastType::I64, Cardinality::SingleValue)?;
+        self.typed_fast_field_reader_async(self.schema.get_field_name(field))
+            .await
+    }
+
+    /// Returns the `date` fast field reader reader associated with `field`.
+    ///
+    /// If `field` is not a date fast field, this method returns an Error.
+    pub async fn date_async(&self, field_name: &str) -> crate::Result<Arc<dyn Column<DateTime>>> {
+        let field = self.schema.get_field(field_name)?;
+        self.check_type(field, FastType::Date, Cardinality::SingleValue)?;
+        self.typed_fast_field_reader_async(field_name).await
+    }
+
+    /// Returns the `f64` fast field reader reader associated with `field`.
+    ///
+    /// If `field` is not a f64 fast field, this method returns an Error.
+    pub async fn f64_async(&self, field_name: &str) -> crate::Result<Arc<dyn Column<f64>>> {
+        let field = self.schema.get_field(field_name)?;
+        self.check_type(field, FastType::F64, Cardinality::SingleValue)?;
+        self.typed_fast_field_reader_async(field_name).await
+    }
+
+    /// Returns the `bool` fast field reader reader associated with `field`.
+    ///
+    /// If `field` is not a bool fast field, this method returns an Error.
+    pub async fn bool_async(&self, field_name: &str) -> crate::Result<Arc<dyn Column<bool>>> {
+        let field = self.schema.get_field(field_name)?;
+        self.check_type(field, FastType::Bool, Cardinality::SingleValue)?;
+        self.typed_fast_field_reader_async(field_name).await
+    }
+
+    /// Returns a `u64s` multi-valued fast field reader reader associated with `field`.
+    ///
+    /// If `field` is not a u64 multi-valued fast field, this method returns an Error.
+    pub async fn u64s_async(
+        &self,
+        field_name: &str,
+    ) -> crate::Result<MultiValuedFastFieldReader<u64>> {
+        let field = self.schema.get_field(field_name)?;
+        self.check_type(field, FastType::U64, Cardinality::MultiValues)?;
+        self.typed_fast_field_multi_reader_async(field_name).await
+    }
+
+    /// Returns a `u64s` multi-valued fast field reader reader associated with `field`, regardless
+    /// of whether the given field is effectively of type `u64` or not.
+    ///
+    /// If `field` is not a u64 multi-valued fast field, this method returns an Error.
+    pub async fn u64s_lenient_async(
+        &self,
+        field_name: &str,
+    ) -> crate::Result<MultiValuedFastFieldReader<u64>> {
+        self.typed_fast_field_multi_reader_async(field_name).await
+    }
+
+    /// Returns a `i64s` multi-valued fast field reader reader associated with `field`.
+    ///
+    /// If `field` is not a i64 multi-valued fast field, this method returns an Error.
+    pub async fn i64s_async(
+        &self,
+        field_name: &str,
+    ) -> crate::Result<MultiValuedFastFieldReader<i64>> {
+        let field = self.schema.get_field(field_name)?;
+        self.check_type(field, FastType::I64, Cardinality::MultiValues)?;
+        self.typed_fast_field_multi_reader_async(self.schema.get_field_name(field))
+            .await
+    }
+
+    /// Returns a `f64s` multi-valued fast field reader reader associated with `field`.
+    ///
+    /// If `field` is not a f64 multi-valued fast field, this method returns an Error.
+    pub async fn f64s_async(
+        &self,
+        field_name: &str,
+    ) -> crate::Result<MultiValuedFastFieldReader<f64>> {
+        let field = self.schema.get_field(field_name)?;
+        self.check_type(field, FastType::F64, Cardinality::MultiValues)?;
+        self.typed_fast_field_multi_reader_async(self.schema.get_field_name(field))
+            .await
+    }
+
+    /// Returns a `bools` multi-valued fast field reader reader associated with `field`.
+    ///
+    /// If `field` is not a bool multi-valued fast field, this method returns an Error.
+    pub async fn bools_async(
+        &self,
+        field_name: &str,
+    ) -> crate::Result<MultiValuedFastFieldReader<bool>> {
+        let field = self.schema.get_field(field_name)?;
+        self.check_type(field, FastType::Bool, Cardinality::MultiValues)?;
+        self.typed_fast_field_multi_reader_async(self.schema.get_field_name(field))
+            .await
+    }
+
+    /// Returns a `time::OffsetDateTime` multi-valued fast field reader reader associated with
+    /// `field`.
+    ///
+    /// If `field` is not a `time::OffsetDateTime` multi-valued fast field, this method returns an
+    /// Error.
+    pub async fn dates_async(
+        &self,
+        field_name: &str,
+    ) -> crate::Result<MultiValuedFastFieldReader<DateTime>> {
+        let field = self.schema.get_field(field_name)?;
+        self.check_type(field, FastType::Date, Cardinality::MultiValues)?;
+        self.typed_fast_field_multi_reader_async(self.schema.get_field_name(field))
+            .await
+    }
+}

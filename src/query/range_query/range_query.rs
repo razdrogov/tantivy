@@ -1,6 +1,7 @@
 use std::io;
 use std::ops::{Bound, Range};
 
+use async_trait::async_trait;
 use common::{BinarySerializable, BitSet};
 
 use super::map_bound;
@@ -284,6 +285,7 @@ pub(crate) fn maps_to_u64_fastfield(typ: Type) -> bool {
     }
 }
 
+#[async_trait]
 impl Query for RangeQuery {
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         let schema = enable_scoring.schema();
@@ -329,6 +331,13 @@ impl Query for RangeQuery {
                 right_bound: self.right_bound.clone(),
             }))
         }
+    }
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        self.weight(enable_scoring)
     }
 }
 
