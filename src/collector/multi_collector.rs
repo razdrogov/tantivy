@@ -61,7 +61,7 @@ impl SegmentCollector for Box<dyn BoxableSegmentCollector> {
     }
 }
 
-pub trait BoxableSegmentCollector {
+pub trait BoxableSegmentCollector: Send {
     fn collect(&mut self, doc: u32, score: Score);
     fn harvest_from_box(self: Box<Self>) -> Box<dyn Fruit>;
 }

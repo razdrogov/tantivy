@@ -47,6 +47,7 @@ impl<TCustomScorer, TScore> Collector for CustomScoreTopCollector<TCustomScorer,
 where
     TCustomScorer: CustomScorer<TScore> + Send + Sync,
     TScore: 'static + PartialOrd + Clone + Send + Sync,
+    <TCustomScorer as CustomScorer<TScore>>::Child: Send,
 {
     type Fruit = Vec<(TScore, DocAddress)>;
 
@@ -86,7 +87,7 @@ where
 impl<T, TScore> SegmentCollector for CustomScoreTopSegmentCollector<T, TScore>
 where
     TScore: 'static + PartialOrd + Clone + Send + Sync,
-    T: 'static + CustomSegmentScorer<TScore>,
+    T: 'static + CustomSegmentScorer<TScore> + Send,
 {
     type Fruit = Vec<(TScore, DocAddress)>;
 

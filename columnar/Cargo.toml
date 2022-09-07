@@ -1,10 +1,11 @@
 [package]
-name = "tantivy-columnar"
+name = "summavy-columnar"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
 [dependencies]
+<<<<<<< HEAD
 itertools = "0.10.5"
 log = "0.4.17"
 fnv = "1.0.7"
@@ -13,10 +14,10 @@ rand = { version = "0.8.5", optional = true }
 measure_time = { version = "0.8.2", optional = true }
 prettytable-rs = { version = "0.10.0", optional = true }
 
-stacker = { path = "../stacker", package="tantivy-stacker"}
-sstable = { path = "../sstable", package = "tantivy-sstable" }
-common = { path = "../common", package = "tantivy-common" }
-tantivy-bitpacker = { version= "0.3", path = "../bitpacker/" }
+stacker = { path = "../stacker", package="summavy-stacker"}
+sstable = { path = "../sstable", package = "summavy-sstable" }
+common = { path = "../common", package = "summavy-common" }
+tantivy-bitpacker = { version= "0.3", path = "../bitpacker/", package = "summavy-bitpacker" }
 
 [dev-dependencies]
 proptest = "1.0.0"

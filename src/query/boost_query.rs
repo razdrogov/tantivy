@@ -1,5 +1,7 @@
 use std::fmt;
 
+use async_trait::async_trait;
+
 use crate::fastfield::AliveBitSet;
 use crate::query::explanation::does_not_match;
 use crate::query::{EnableScoring, Explanation, Query, Scorer, Weight};
@@ -37,9 +39,24 @@ impl fmt::Debug for BoostQuery {
     }
 }
 
+#[async_trait]
 impl Query for BoostQuery {
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         let weight_without_boost = self.query.weight(enable_scoring)?;
+        let boosted_weight = if enable_scoring.is_scoring_enabled() {
+            Box::new(BoostWeight::new(weight_without_boost, self.boost))
+        } else {
+            weight_without_boost
+        };
+        Ok(boosted_weight)
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        let weight_without_boost = self.query.weight_async(enable_scoring).await?;
         let boosted_weight = if enable_scoring.is_scoring_enabled() {
             Box::new(BoostWeight::new(weight_without_boost, self.boost))
         } else {

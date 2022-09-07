@@ -510,7 +510,24 @@ impl IndexWriter {
     ///
     /// `segment_ids` is required to be non-empty.
     pub fn merge(&mut self, segment_ids: &[SegmentId]) -> FutureResult<Option<SegmentMeta>> {
-        let merge_operation = self.segment_updater.make_merge_operation(segment_ids);
+        self.merge_with_attributes(segment_ids, None)
+    }
+
+    /// Merges a given list of segments and set attributes in merged segment.
+    ///
+    /// If all segments are empty no new segment will be created.
+    ///
+    /// `segment_ids` is required to be non-empty.
+    /// set `override_segment_attributes` to `Some(...)` if you want to
+    /// override segment attributes, otherwise it should be set to `None`
+    pub fn merge_with_attributes(
+        &mut self,
+        segment_ids: &[SegmentId],
+        override_segment_attributes: Option<serde_json::Value>,
+    ) -> FutureResult<Option<SegmentMeta>> {
+        let merge_operation = self
+            .segment_updater
+            .make_merge_operation(segment_ids, override_segment_attributes);
         let segment_updater = self.segment_updater.clone();
         segment_updater.start_merge(merge_operation)
     }
@@ -783,6 +800,105 @@ impl IndexWriter {
         } else {
             Err(error_in_index_worker_thread("An index writer was killed."))
         }
+    }
+}
+
+#[cfg(feature = "quickwit")]
+impl IndexWriter {
+    pub(crate) async fn new_async(
+        index: &Index,
+        num_threads: usize,
+        memory_arena_in_bytes_per_thread: usize,
+        directory_lock: DirectoryLock,
+    ) -> crate::Result<IndexWriter> {
+        if memory_arena_in_bytes_per_thread < MEMORY_ARENA_NUM_BYTES_MIN {
+            let err_msg = format!(
+                "The memory arena in bytes per thread needs to be at least {}.",
+                MEMORY_ARENA_NUM_BYTES_MIN
+            );
+            return Err(TantivyError::InvalidArgument(err_msg));
+        }
+        if memory_arena_in_bytes_per_thread >= MEMORY_ARENA_NUM_BYTES_MAX {
+            let err_msg = format!(
+                "The memory arena in bytes per thread cannot exceed {}",
+                MEMORY_ARENA_NUM_BYTES_MAX
+            );
+            return Err(TantivyError::InvalidArgument(err_msg));
+        }
+        let (document_sender, document_receiver): (AddBatchSender, AddBatchReceiver) =
+            crossbeam_channel::bounded(PIPELINE_MAX_SIZE_IN_DOCS);
+
+        let delete_queue = DeleteQueue::new();
+
+        let current_opstamp = index.load_metas_async().await?.opstamp;
+
+        let stamper = Stamper::new(current_opstamp);
+
+        let segment_updater =
+            SegmentUpdater::create_async(index.clone(), stamper.clone(), &delete_queue.cursor())
+                .await?;
+
+        let mut index_writer = IndexWriter {
+            _directory_lock: Some(directory_lock),
+
+            memory_arena_in_bytes_per_thread,
+            index: index.clone(),
+            index_writer_status: IndexWriterStatus::from(document_receiver),
+            operation_sender: document_sender,
+
+            segment_updater,
+
+            workers_join_handle: vec![],
+            num_threads,
+
+            delete_queue,
+
+            committed_opstamp: current_opstamp,
+            stamper,
+
+            worker_id: 0,
+        };
+        index_writer.start_workers()?;
+        Ok(index_writer)
+    }
+
+    pub async fn rollback_async(&mut self) -> crate::Result<Opstamp> {
+        info!("Rolling back to opstamp {}", self.committed_opstamp);
+        // marks the segment updater as killed. From now on, all
+        // segment updates will be ignored.
+        self.segment_updater.kill();
+        let document_receiver_res = self.operation_receiver();
+
+        // take the directory lock to create a new index_writer.
+        let directory_lock = self
+            ._directory_lock
+            .take()
+            .expect("The IndexWriter does not have any lock. This is a bug, please report.");
+
+        let new_index_writer: IndexWriter = IndexWriter::new_async(
+            &self.index,
+            self.num_threads,
+            self.memory_arena_in_bytes_per_thread,
+            directory_lock,
+        )
+        .await?;
+
+        // the current `self` is dropped right away because of this call.
+        //
+        // This will drop the document queue, and the thread
+        // should terminate.
+        *self = new_index_writer;
+
+        // Drains the document receiver pipeline :
+        // Workers don't need to index the pending documents.
+        //
+        // This will reach an end as the only document_sender
+        // was dropped with the index_writer.
+        if let Ok(document_receiver) = document_receiver_res {
+            for _ in document_receiver {}
+        }
+
+        Ok(self.committed_opstamp)
     }
 }
 

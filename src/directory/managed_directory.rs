@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock, RwLockWriteGuard};
 use std::{io, result};
 
+use async_trait::async_trait;
 use crc32fast::Hasher;
 
 use crate::core::MANAGED_FILEPATH;
@@ -266,8 +267,14 @@ impl ManagedDirectory {
             .clone();
         managed_paths
     }
+
+    /// Return inner directory
+    pub fn inner_directory(&self) -> &Box<dyn Directory> {
+        &self.directory
+    }
 }
 
+#[async_trait]
 impl Directory for ManagedDirectory {
     fn get_file_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>, OpenReadError> {
         let file_slice = self.open_read(path)?;
@@ -303,8 +310,18 @@ impl Directory for ManagedDirectory {
         self.directory.atomic_read(path)
     }
 
+    #[cfg(feature = "quickwit")]
+    async fn atomic_read_async(&self, path: &Path) -> Result<Vec<u8>, OpenReadError> {
+        self.directory.atomic_read_async(path).await
+    }
+
     fn delete(&self, path: &Path) -> result::Result<(), DeleteError> {
         self.directory.delete(path)
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn delete_async(&self, path: &Path) -> result::Result<(), DeleteError> {
+        self.directory.delete_async(path).await
     }
 
     fn exists(&self, path: &Path) -> Result<bool, OpenReadError> {

@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io, thread};
 
+use async_trait::async_trait;
+
 use crate::directory::directory_lock::Lock;
 use crate::directory::error::{DeleteError, LockError, OpenReadError, OpenWriteError};
 use crate::directory::{FileHandle, FileSlice, WatchCallback, WatchHandle, WritePtr};
@@ -106,6 +108,7 @@ fn retry_policy(is_blocking: bool) -> RetryPolicy {
 /// should be your default choice.
 /// - The [`RamDirectory`][crate::directory::RamDirectory], which
 /// should be used mostly for tests.
+#[async_trait]
 pub trait Directory: DirectoryClone + fmt::Debug + Send + Sync + 'static {
     /// Opens a file and returns a boxed `FileHandle`.
     ///
@@ -132,7 +135,14 @@ pub trait Directory: DirectoryClone + fmt::Debug + Send + Sync + 'static {
     ///
     /// Removing a nonexistent file, returns a
     /// [`DeleteError::FileDoesNotExist`].
-    fn delete(&self, path: &Path) -> Result<(), DeleteError>;
+    fn delete(&self, _: &Path) -> Result<(), DeleteError> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn delete_async(&self, _: &Path) -> Result<(), DeleteError> {
+        unimplemented!()
+    }
 
     /// Returns true if and only if the file exists
     fn exists(&self, path: &Path) -> Result<bool, OpenReadError>;
@@ -163,7 +173,9 @@ pub trait Directory: DirectoryClone + fmt::Debug + Send + Sync + 'static {
     /// panic! if `flush` was not called.
     ///
     /// The file may not previously exist.
-    fn open_write(&self, path: &Path) -> Result<WritePtr, OpenWriteError>;
+    fn open_write(&self, _: &Path) -> Result<WritePtr, OpenWriteError> {
+        unimplemented!()
+    }
 
     /// Reads the full content file that has been written using
     /// [`Directory::atomic_write()`].
@@ -173,19 +185,30 @@ pub trait Directory: DirectoryClone + fmt::Debug + Send + Sync + 'static {
     /// You should only use this to read files create with [`Directory::atomic_write()`].
     fn atomic_read(&self, path: &Path) -> Result<Vec<u8>, OpenReadError>;
 
+    /// Reads asynchronously the full content file that has been written using
+    /// [`Directory::atomic_write()`].
+    ///
+    /// You should only use this to read files create with [`Directory::atomic_write()`].
+    #[cfg(feature = "quickwit")]
+    async fn atomic_read_async(&self, path: &Path) -> Result<Vec<u8>, OpenReadError>;
+
     /// Atomically replace the content of a file with data.
     ///
     /// This calls ensure that reads can never *observe*
     /// a partially written file.
     ///
     /// The file may or may not previously exist.
-    fn atomic_write(&self, path: &Path, data: &[u8]) -> io::Result<()>;
+    fn atomic_write(&self, _: &Path, _: &[u8]) -> io::Result<()> {
+        unimplemented!()
+    }
 
     /// Sync the directory.
     ///
     /// This call is required to ensure that newly created files are
     /// effectively stored durably.
-    fn sync_directory(&self) -> io::Result<()>;
+    fn sync_directory(&self) -> io::Result<()> {
+        unimplemented!()
+    }
 
     /// Acquire a lock in the directory given in the [`Lock`].
     ///
@@ -224,7 +247,9 @@ pub trait Directory: DirectoryClone + fmt::Debug + Send + Sync + 'static {
     /// Internally, tantivy only uses this API to detect new commits to implement the
     /// `OnCommit` `ReloadPolicy`. Not implementing watch in a `Directory` only prevents the
     /// `OnCommit` `ReloadPolicy` to work properly.
-    fn watch(&self, watch_callback: WatchCallback) -> crate::Result<WatchHandle>;
+    fn watch(&self, _: WatchCallback) -> crate::Result<WatchHandle> {
+        unimplemented!();
+    }
 }
 
 /// DirectoryClone

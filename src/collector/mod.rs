@@ -81,6 +81,7 @@
 //!
 //! See the `custom_collector` example.
 
+use async_trait::async_trait;
 use downcast_rs::impl_downcast;
 
 use crate::{DocId, Score, SegmentOrdinal, SegmentReader};
@@ -137,6 +138,7 @@ impl<T> Fruit for T where T: Send + downcast_rs::Downcast {}
 /// The collection logic itself is in the `SegmentCollector`.
 ///
 /// Segments are not guaranteed to be visited in any specific order.
+#[async_trait]
 pub trait Collector: Sync + Send {
     /// `Fruit` is the type for the result of our collection.
     /// e.g. `usize` for the `Count` collector.
@@ -196,6 +198,54 @@ pub trait Collector: Sync + Send {
                 weight.for_each_no_score(reader, &mut |doc| {
                     segment_collector.collect(doc, 0.0);
                 })?;
+            }
+        }
+
+        Ok(segment_collector.harvest())
+    }
+
+    /// Created a segment collector in async way
+    #[cfg(feature = "quickwit")]
+    async fn collect_segment_async(
+        &self,
+        weight: &dyn Weight,
+        segment_ord: u32,
+        reader: &SegmentReader,
+    ) -> crate::Result<<Self::Child as SegmentCollector>::Fruit> {
+        let mut segment_collector = self.for_segment(segment_ord as u32, reader)?;
+
+        match (reader.alive_bitset(), self.requires_scoring()) {
+            (Some(alive_bitset), true) => {
+                let cb = &mut |doc, score| {
+                    if alive_bitset.is_alive(doc) {
+                        segment_collector.collect(doc, score);
+                    }
+                };
+                let ft = weight.for_each_async(reader, cb);
+                ft.await?;
+            }
+            (Some(alive_bitset), false) => {
+                let cb = &mut |doc| {
+                    if alive_bitset.is_alive(doc) {
+                        segment_collector.collect(doc, 0.0);
+                    }
+                };
+                let ft = weight.for_each_no_score_async(reader, cb);
+                ft.await?;
+            }
+            (None, true) => {
+                let cb = &mut |doc, score| {
+                    segment_collector.collect(doc, score);
+                };
+                let ft = weight.for_each_async(reader, cb);
+                ft.await?;
+            }
+            (None, false) => {
+                let cb = &mut |doc| {
+                    segment_collector.collect(doc, 0.0);
+                };
+                let ft = weight.for_each_no_score_async(reader, cb);
+                ft.await?;
             }
         }
 
@@ -263,7 +313,7 @@ impl<TCollector: Collector> Collector for Option<TCollector> {
 ///
 /// `.collect(doc, score)` will be called for every documents
 /// matching the query.
-pub trait SegmentCollector: 'static {
+pub trait SegmentCollector: Send + 'static {
     /// `Fruit` is the type for the result of our collection.
     /// e.g. `usize` for the `Count` collector.
     type Fruit: Fruit;

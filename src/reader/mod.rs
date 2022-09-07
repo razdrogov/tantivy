@@ -145,6 +145,52 @@ impl IndexReaderBuilder {
     }
 }
 
+#[cfg(feature = "quickwit")]
+impl IndexReaderBuilder {
+    pub async fn build_async(self) -> crate::Result<IndexReader> {
+        let searcher_generation_inventory = Inventory::default();
+        let warming_state = WarmingState::new(
+            self.num_warming_threads,
+            self.warmers,
+            searcher_generation_inventory.clone(),
+        )?;
+        let inner_reader = InnerIndexReader::new_async(
+            self.doc_store_cache_size,
+            self.index,
+            warming_state,
+            searcher_generation_inventory,
+        )
+        .await?;
+        let inner_reader_arc = Arc::new(inner_reader);
+        let watch_handle_opt: Option<WatchHandle> = match self.reload_policy {
+            ReloadPolicy::Manual => {
+                // No need to set anything...
+                None
+            }
+            ReloadPolicy::OnCommit => {
+                let inner_reader_arc_clone = inner_reader_arc.clone();
+                let callback = move || {
+                    if let Err(err) = inner_reader_arc_clone.reload() {
+                        error!(
+                            "Error while loading searcher after commit was detected. {:?}",
+                            err
+                        );
+                    }
+                };
+                let watch_handle = inner_reader_arc
+                    .index
+                    .directory()
+                    .watch(WatchCallback::new(callback))?;
+                Some(watch_handle)
+            }
+        };
+        Ok(IndexReader {
+            inner: inner_reader_arc,
+            _watch_handle_opt: watch_handle_opt,
+        })
+    }
+}
+
 impl TryInto<IndexReader> for IndexReaderBuilder {
     type Error = crate::TantivyError;
 
@@ -189,6 +235,7 @@ impl InnerIndexReader {
             searcher_generation_inventory,
         })
     }
+
     /// Opens the freshest segments [`SegmentReader`].
     ///
     /// This function acquires a lot to prevent GC from removing files
@@ -258,6 +305,85 @@ impl InnerIndexReader {
 
     fn searcher(&self) -> Searcher {
         self.searcher.load().clone().into()
+    }
+}
+
+#[cfg(feature = "quickwit")]
+impl InnerIndexReader {
+    async fn new_async(
+        doc_store_cache_size: usize,
+        index: Index,
+        warming_state: WarmingState,
+        searcher_generation_inventory: Inventory<SearcherGeneration>,
+    ) -> crate::Result<Self> {
+        let searcher_generation_counter: Arc<AtomicU64> = Default::default();
+
+        let searcher = Self::create_searcher_async(
+            &index,
+            doc_store_cache_size,
+            &warming_state,
+            &searcher_generation_counter,
+            &searcher_generation_inventory,
+        )
+        .await?;
+        Ok(InnerIndexReader {
+            doc_store_cache_size,
+            index,
+            warming_state,
+            searcher: ArcSwap::from(searcher),
+            searcher_generation_counter,
+            searcher_generation_inventory,
+        })
+    }
+    async fn open_segment_readers_async(index: &Index) -> crate::Result<Vec<SegmentReader>> {
+        // Prevents segment files from getting deleted while we are in the process of opening them
+        let _meta_lock = index.directory().acquire_lock(&META_LOCK)?;
+        let searchable_segments = index.searchable_segments_async().await?;
+        let segment_readers = searchable_segments
+            .iter()
+            .map(SegmentReader::open)
+            .collect::<crate::Result<_>>()?;
+        Ok(segment_readers)
+    }
+    async fn create_searcher_async(
+        index: &Index,
+        doc_store_cache_size: usize,
+        warming_state: &WarmingState,
+        searcher_generation_counter: &Arc<AtomicU64>,
+        searcher_generation_inventory: &Inventory<SearcherGeneration>,
+    ) -> crate::Result<Arc<SearcherInner>> {
+        let segment_readers = Self::open_segment_readers_async(index).await?;
+        let searcher_generation = Self::track_segment_readers_in_inventory(
+            &segment_readers,
+            searcher_generation_counter,
+            searcher_generation_inventory,
+        );
+
+        let schema = index.schema();
+        let searcher = Arc::new(SearcherInner::new(
+            schema,
+            index.clone(),
+            segment_readers,
+            searcher_generation,
+            doc_store_cache_size,
+        )?);
+
+        warming_state.warm_new_searcher_generation(&searcher.clone().into())?;
+        Ok(searcher)
+    }
+    async fn reload_async(&self) -> crate::Result<()> {
+        let searcher = Self::create_searcher_async(
+            &self.index,
+            self.doc_store_cache_size,
+            &self.warming_state,
+            &self.searcher_generation_counter,
+            &self.searcher_generation_inventory,
+        )
+        .await?;
+
+        self.searcher.store(searcher);
+
+        Ok(())
     }
 }
 

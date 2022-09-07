@@ -340,6 +340,81 @@ impl SegmentReader {
     }
 }
 
+#[cfg(feature = "quickwit")]
+impl SegmentReader {
+    pub async fn inverted_index_async(
+        &self,
+        field: Field,
+    ) -> crate::Result<Arc<InvertedIndexReader>> {
+        if let Some(inv_idx_reader) = self
+            .inv_idx_reader_cache
+            .read()
+            .expect("Lock poisoned. This should never happen")
+            .get(&field)
+        {
+            return Ok(Arc::clone(inv_idx_reader));
+        }
+        let field_entry = self.schema.get_field_entry(field);
+        let field_type = field_entry.field_type();
+        let record_option_opt = field_type.get_index_record_option();
+
+        if record_option_opt.is_none() {
+            warn!("Field {:?} does not seem indexed.", field_entry.name());
+        }
+
+        let postings_file_opt = self.postings_composite.open_read(field);
+
+        if postings_file_opt.is_none() || record_option_opt.is_none() {
+            // no documents in the segment contained this field.
+            // As a result, no data is associated with the inverted index.
+            //
+            // Returns an empty inverted index.
+            let record_option = record_option_opt.unwrap_or(IndexRecordOption::Basic);
+            return Ok(Arc::new(InvertedIndexReader::empty(record_option)));
+        }
+
+        let record_option = record_option_opt.unwrap();
+        let postings_file = postings_file_opt.unwrap();
+
+        let termdict_file: FileSlice =
+            self.termdict_composite.open_read(field).ok_or_else(|| {
+                DataCorruption::comment_only(format!(
+                    "Failed to open field {:?}'s term dictionary in the composite file. Has the \
+                     schema been modified?",
+                    field_entry.name()
+                ))
+            })?;
+
+        let positions_file = self.positions_composite.open_read(field).ok_or_else(|| {
+            let error_msg = format!(
+                "Failed to open field {:?}'s positions in the composite file. Has the schema been \
+                 modified?",
+                field_entry.name()
+            );
+            DataCorruption::comment_only(error_msg)
+        })?;
+
+        let inv_idx_reader = Arc::new(
+            InvertedIndexReader::new_async(
+                TermDictionary::open_async(termdict_file).await?,
+                postings_file,
+                positions_file,
+                record_option,
+            )
+            .await?,
+        );
+
+        // by releasing the lock in between, we may end up opening the inverting index
+        // twice, but this is fine.
+        self.inv_idx_reader_cache
+            .write()
+            .expect("Field reader cache lock poisoned. This should never happen.")
+            .insert(field, Arc::clone(&inv_idx_reader));
+
+        Ok(inv_idx_reader)
+    }
+}
+
 fn intersect_alive_bitset(
     left_opt: Option<AliveBitSet>,
     right_opt: Option<AliveBitSet>,

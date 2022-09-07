@@ -49,6 +49,7 @@ impl<TScoreTweaker, TScore> Collector for TweakedScoreTopCollector<TScoreTweaker
 where
     TScoreTweaker: ScoreTweaker<TScore> + Send + Sync,
     TScore: 'static + PartialOrd + Clone + Send + Sync,
+    <TScoreTweaker as ScoreTweaker<TScore>>::Child: Send,
 {
     type Fruit = Vec<(TScore, DocAddress)>;
 
@@ -89,7 +90,7 @@ impl<TSegmentScoreTweaker, TScore> SegmentCollector
     for TopTweakedScoreSegmentCollector<TSegmentScoreTweaker, TScore>
 where
     TScore: 'static + PartialOrd + Clone + Send + Sync,
-    TSegmentScoreTweaker: 'static + ScoreSegmentTweaker<TScore>,
+    TSegmentScoreTweaker: 'static + ScoreSegmentTweaker<TScore> + Send,
 {
     type Fruit = Vec<(TScore, DocAddress)>;
 
