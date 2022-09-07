@@ -200,6 +200,24 @@ impl InvertedIndexReader {
 
 #[cfg(feature = "quickwit")]
 impl InvertedIndexReader {
+    pub(crate) async fn new_async(
+        termdict: TermDictionary,
+        postings_file_slice: FileSlice,
+        positions_file_slice: FileSlice,
+        record_option: IndexRecordOption,
+    ) -> io::Result<InvertedIndexReader> {
+        let (total_num_tokens_slice, postings_body) = postings_file_slice.split(8);
+        let total_num_tokens =
+            u64::deserialize(&mut total_num_tokens_slice.read_bytes_async().await?)?;
+        Ok(InvertedIndexReader {
+            termdict,
+            postings_file_slice: postings_body,
+            positions_file_slice,
+            record_option,
+            total_num_tokens,
+        })
+    }
+
     pub(crate) async fn get_term_info_async(&self, term: &Term) -> io::Result<Option<TermInfo>> {
         self.termdict.get_async(term.value_bytes()).await
     }
@@ -221,6 +239,116 @@ impl InvertedIndexReader {
             }
         }
         Ok(())
+    }
+
+    /// Returns a block postings given a `Term` asynchronously.
+    /// This method is for an advanced usage only.
+    ///
+    /// Most users should prefer using [`Self::read_postings_async()`] instead.
+    pub async fn read_block_postings_async(
+        &self,
+        term: &Term,
+        option: IndexRecordOption,
+    ) -> io::Result<Option<BlockSegmentPostings>> {
+        match self.get_term_info_async(term).await? {
+            None => None,
+            Some(term_info) => Some(
+                self.read_block_postings_from_terminfo_async(&term_info, option)
+                    .await,
+            ),
+        }
+        .transpose()
+    }
+
+    pub(crate) async fn read_postings_no_deletes_async(
+        &self,
+        term: &Term,
+        option: IndexRecordOption,
+    ) -> io::Result<Option<SegmentPostings>> {
+        match self.get_term_info_async(term).await? {
+            None => None,
+            Some(term_info) => Some(
+                self.read_postings_from_terminfo_async(&term_info, option)
+                    .await,
+            ),
+        }
+        .transpose()
+    }
+
+    /// Returns a posting object given a `term_info` asynchronously.
+    /// This method is for an advanced usage only.
+    ///
+    /// Most users should prefer using [`Self::read_postings_async()`] instead.
+    pub async fn read_postings_from_terminfo_async(
+        &self,
+        term_info: &TermInfo,
+        option: IndexRecordOption,
+    ) -> io::Result<SegmentPostings> {
+        let block_postings = self
+            .read_block_postings_from_terminfo_async(term_info, option)
+            .await?;
+        let position_reader = {
+            if option.has_positions() {
+                let positions_data = self
+                    .positions_file_slice
+                    .read_bytes_slice_async(term_info.positions_range.clone())
+                    .await?;
+                let position_reader = PositionReader::open(positions_data)?;
+                Some(position_reader)
+            } else {
+                None
+            }
+        };
+        Ok(SegmentPostings::from_block_postings(
+            block_postings,
+            position_reader,
+        ))
+    }
+
+    /// Returns a block postings given a `term_info` asynchronously.
+    /// This method is for an advanced usage only.
+    ///
+    /// Most users should prefer using [`Self::read_postings_async()`] instead.
+    pub async fn read_block_postings_from_terminfo_async(
+        &self,
+        term_info: &TermInfo,
+        requested_option: IndexRecordOption,
+    ) -> io::Result<BlockSegmentPostings> {
+        let postings_data = self
+            .postings_file_slice
+            .slice(term_info.postings_range.clone());
+        BlockSegmentPostings::open_async(
+            term_info.doc_freq,
+            postings_data,
+            self.record_option,
+            requested_option,
+        )
+        .await
+    }
+
+    /// Returns the segment postings associated with the term asynchronously, and with the given
+    /// option, or `None` if the term has never been encountered and indexed.
+    ///
+    /// If the field was not indexed with the indexing options that cover
+    /// the requested options, the returned [`SegmentPostings`] the method does not fail
+    /// and returns a `SegmentPostings` with as much information as possible.
+    ///
+    /// For instance, requesting [`IndexRecordOption::WithFreqs`] for a
+    /// [`TextOptions`](crate::schema::TextOptions) that does not index position
+    /// will return a [`SegmentPostings`] with `DocId`s and frequencies.
+    pub async fn read_postings_async(
+        &self,
+        term: &Term,
+        option: IndexRecordOption,
+    ) -> io::Result<Option<SegmentPostings>> {
+        match self.get_term_info_async(term).await? {
+            None => None,
+            Some(term_info) => Some(
+                self.read_postings_from_terminfo_async(&term_info, option)
+                    .await,
+            ),
+        }
+        .transpose()
     }
 
     /// Read the block postings for all terms.

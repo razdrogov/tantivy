@@ -59,6 +59,7 @@ fn ip_dataset() -> Vec<u128> {
     let stdin = std::io::stdin();
     let ip_addrs: Vec<u128> = stdin
         .lock()
+        .lock()
         .lines()
         .flat_map(|line| {
             let line = line.unwrap();

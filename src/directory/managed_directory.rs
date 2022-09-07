@@ -1,9 +1,11 @@
+use std::any::Any;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock, RwLockWriteGuard};
 use std::{io, result};
 
+use async_trait::async_trait;
 use crc32fast::Hasher;
 
 use crate::core::MANAGED_FILEPATH;
@@ -268,6 +270,7 @@ impl ManagedDirectory {
     }
 }
 
+#[async_trait]
 impl Directory for ManagedDirectory {
     fn get_file_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>, OpenReadError> {
         let file_slice = self.open_read(path)?;
@@ -277,6 +280,16 @@ impl Directory for ManagedDirectory {
     fn open_read(&self, path: &Path) -> result::Result<FileSlice, OpenReadError> {
         let file_slice = self.directory.open_read(path)?;
         let (footer, reader) = Footer::extract_footer(file_slice)
+            .map_err(|io_error| OpenReadError::wrap_io_error(io_error, path.to_path_buf()))?;
+        footer.is_compatible()?;
+        Ok(reader)
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn open_read_async(&self, path: &Path) -> result::Result<FileSlice, OpenReadError> {
+        let file_slice = self.directory.open_read_async(path).await?;
+        let (footer, reader) = Footer::extract_footer_async(file_slice)
+            .await
             .map_err(|io_error| OpenReadError::wrap_io_error(io_error, path.to_path_buf()))?;
         footer.is_compatible()?;
         Ok(reader)
@@ -303,8 +316,18 @@ impl Directory for ManagedDirectory {
         self.directory.atomic_read(path)
     }
 
+    #[cfg(feature = "quickwit")]
+    async fn atomic_read_async(&self, path: &Path) -> Result<Vec<u8>, OpenReadError> {
+        self.directory.atomic_read_async(path).await
+    }
+
     fn delete(&self, path: &Path) -> result::Result<(), DeleteError> {
         self.directory.delete(path)
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn delete_async(&self, path: &Path) -> result::Result<(), DeleteError> {
+        self.directory.delete_async(path).await
     }
 
     fn exists(&self, path: &Path) -> Result<bool, OpenReadError> {
@@ -322,6 +345,18 @@ impl Directory for ManagedDirectory {
     fn sync_directory(&self) -> io::Result<()> {
         self.directory.sync_directory()?;
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn underlying_directory(&self) -> Option<&dyn Directory> {
+        Some(self.directory.as_ref())
+    }
+
+    fn real_directory(&self) -> &dyn Directory {
+        self.directory.real_directory()
     }
 }
 

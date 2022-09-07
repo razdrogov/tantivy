@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use super::agg_req::Aggregations;
 use super::agg_req_with_accessor::AggregationsWithAccessor;
@@ -150,7 +150,7 @@ impl AggregationSegmentCollector {
         max_bucket_count: u32,
     ) -> crate::Result<Self> {
         let aggs_with_accessor =
-            get_aggs_with_accessor_and_validate(agg, reader, Rc::default(), max_bucket_count)?;
+            get_aggs_with_accessor_and_validate(agg, reader, Arc::default(), max_bucket_count)?;
         let result =
             SegmentAggregationResultsCollector::from_req_and_validate(&aggs_with_accessor)?;
         Ok(AggregationSegmentCollector {

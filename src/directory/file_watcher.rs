@@ -72,6 +72,10 @@ impl FileWatcher {
     }
 
     fn compute_checksum(path: &Path) -> Result<u32, io::Error> {
+        if !path.exists() {
+            return Ok(0);
+        }
+
         let reader = match fs::File::open(path) {
             Ok(f) => io::BufReader::new(f),
             Err(e) => {

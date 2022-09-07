@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use tantivy_query_grammar::Occur;
 
 use crate::query::{BooleanWeight, DisjunctionMaxCombiner, EnableScoring, Query, Weight};
@@ -90,6 +91,7 @@ impl Clone for DisjunctionMaxQuery {
     }
 }
 
+#[async_trait]
 impl Query for DisjunctionMaxQuery {
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         let disjuncts = self
@@ -97,6 +99,24 @@ impl Query for DisjunctionMaxQuery {
             .iter()
             .map(|disjunct| Ok((Occur::Should, disjunct.weight(enable_scoring)?)))
             .collect::<crate::Result<_>>()?;
+        let tie_breaker = self.tie_breaker;
+        Ok(Box::new(BooleanWeight::new(
+            disjuncts,
+            enable_scoring.is_scoring_enabled(),
+            Box::new(move || DisjunctionMaxCombiner::with_tie_breaker(tie_breaker)),
+        )))
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        let disjuncts =
+            futures::future::join_all(self.disjuncts.iter().map(|disjunct| async move {
+                (Occur::Should, disjunct.weight(enable_scoring).unwrap())
+            }))
+            .await;
         let tie_breaker = self.tie_breaker;
         Ok(Box::new(BooleanWeight::new(
             disjuncts,

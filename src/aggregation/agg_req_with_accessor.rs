@@ -1,6 +1,5 @@
 //! This will enhance the request tree with access to the fastfield and metadata.
 
-use std::rc::Rc;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
@@ -80,7 +79,7 @@ impl BucketAggregationWithAccessor {
         bucket: &BucketAggregationType,
         sub_aggregation: &Aggregations,
         reader: &SegmentReader,
-        bucket_count: Rc<AtomicU32>,
+        bucket_count: Arc<AtomicU32>,
         max_bucket_count: u32,
     ) -> crate::Result<BucketAggregationWithAccessor> {
         let mut inverted_index = None;
@@ -157,7 +156,7 @@ impl MetricAggregationWithAccessor {
 pub(crate) fn get_aggs_with_accessor_and_validate(
     aggs: &Aggregations,
     reader: &SegmentReader,
-    bucket_count: Rc<AtomicU32>,
+    bucket_count: Arc<AtomicU32>,
     max_bucket_count: u32,
 ) -> crate::Result<AggregationsWithAccessor> {
     let mut metrics = vec![];
@@ -170,7 +169,7 @@ pub(crate) fn get_aggs_with_accessor_and_validate(
                     &bucket.bucket_agg,
                     &bucket.sub_aggregation,
                     reader,
-                    Rc::clone(&bucket_count),
+                    Arc::clone(&bucket_count),
                     max_bucket_count,
                 )?,
             )),

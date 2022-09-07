@@ -1,5 +1,7 @@
 use std::fmt;
 
+use async_trait::async_trait;
+
 use crate::query::{EnableScoring, Explanation, Query, Scorer, Weight};
 use crate::{DocId, DocSet, Score, SegmentReader, TantivyError, Term};
 
@@ -35,9 +37,23 @@ impl fmt::Debug for ConstScoreQuery {
     }
 }
 
+#[async_trait]
 impl Query for ConstScoreQuery {
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         let inner_weight = self.query.weight(enable_scoring)?;
+        Ok(if enable_scoring.is_scoring_enabled() {
+            Box::new(ConstWeight::new(inner_weight, self.score))
+        } else {
+            inner_weight
+        })
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        let inner_weight = self.query.weight_async(enable_scoring).await?;
         Ok(if enable_scoring.is_scoring_enabled() {
             Box::new(ConstWeight::new(inner_weight, self.score))
         } else {

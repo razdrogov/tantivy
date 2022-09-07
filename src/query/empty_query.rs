@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+
 use super::Scorer;
 use crate::docset::TERMINATED;
 use crate::query::explanation::does_not_match;
@@ -10,11 +12,18 @@ use crate::{DocId, DocSet, Score, Searcher, SegmentReader};
 #[derive(Clone, Debug)]
 pub struct EmptyQuery;
 
+#[async_trait]
 impl Query for EmptyQuery {
     fn weight(&self, _enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         Ok(Box::new(EmptyWeight))
     }
-
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        _enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        Ok(Box::new(EmptyWeight))
+    }
     fn count(&self, _searcher: &Searcher) -> crate::Result<usize> {
         Ok(0)
     }

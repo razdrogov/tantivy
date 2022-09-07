@@ -1,5 +1,6 @@
 use std::fmt;
 
+use async_trait::async_trait;
 use downcast_rs::impl_downcast;
 
 use super::Weight;
@@ -101,6 +102,7 @@ impl<'a> EnableScoring<'a> {
 ///
 /// [`Scorer`]: crate::query::Scorer
 /// [`SegmentReader`]: crate::SegmentReader
+#[async_trait]
 pub trait Query: QueryClone + Send + Sync + downcast_rs::Downcast + fmt::Debug {
     /// Create the weight associated with a query.
     ///
@@ -109,6 +111,15 @@ pub trait Query: QueryClone + Send + Sync + downcast_rs::Downcast + fmt::Debug {
     ///
     /// See [`Weight`].
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>>;
+
+    /// Create the weight associated with a query asynchronously.
+    ///
+    /// See [`Self::weight`].
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>>;
 
     /// Returns an `Explanation` for the score of the document.
     fn explain(&self, searcher: &Searcher, doc_address: DocAddress) -> crate::Result<Explanation> {
@@ -123,6 +134,19 @@ pub trait Query: QueryClone + Send + Sync + downcast_rs::Downcast + fmt::Debug {
         let mut result = 0;
         for reader in searcher.segment_readers() {
             result += weight.count(reader)? as usize;
+        }
+        Ok(result)
+    }
+
+    /// Returns the number of documents matching the query.
+    #[cfg(feature = "quickwit")]
+    async fn count_async(&self, searcher: &Searcher) -> crate::Result<usize> {
+        let weight = self
+            .weight_async(EnableScoring::disabled_from_schema(searcher.schema()))
+            .await?;
+        let mut result = 0;
+        for reader in searcher.segment_readers() {
+            result += weight.count_async(reader).await? as usize;
         }
         Ok(result)
     }
@@ -152,9 +176,18 @@ where T: 'static + Query + Clone
     }
 }
 
+#[async_trait]
 impl Query for Box<dyn Query> {
     fn weight(&self, enabled_scoring: EnableScoring) -> crate::Result<Box<dyn Weight>> {
         self.as_ref().weight(enabled_scoring)
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        self.as_ref().weight_async(enable_scoring).await
     }
 
     fn count(&self, searcher: &Searcher) -> crate::Result<usize> {

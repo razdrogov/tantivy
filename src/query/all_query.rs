@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+
 use crate::core::SegmentReader;
 use crate::docset::{DocSet, TERMINATED};
 use crate::query::boost_query::BoostScorer;
@@ -11,9 +13,17 @@ use crate::{DocId, Score};
 #[derive(Clone, Debug)]
 pub struct AllQuery;
 
+#[async_trait]
 impl Query for AllQuery {
     fn weight(&self, _: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         Ok(Box::new(AllWeight))
+    }
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        self.weight(enable_scoring)
     }
 }
 

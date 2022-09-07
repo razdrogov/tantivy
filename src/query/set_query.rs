@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use async_trait::async_trait;
 use tantivy_fst::raw::CompiledAddr;
 use tantivy_fst::{Automaton, Map};
 
@@ -64,9 +65,17 @@ impl TermSetQuery {
     }
 }
 
+#[async_trait]
 impl Query for TermSetQuery {
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         Ok(Box::new(self.specialized_weight(enable_scoring.schema())?))
+    }
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        self.weight(enable_scoring)
     }
 }
 

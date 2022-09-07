@@ -329,6 +329,29 @@ fn block_read_index(block: &[u8], doc_pos: u32) -> crate::Result<Range<usize>> {
 
 #[cfg(feature = "quickwit")]
 impl StoreReader {
+    pub async fn open_async(
+        store_file: FileSlice,
+        cache_num_blocks: usize,
+    ) -> io::Result<StoreReader> {
+        let (footer, data_and_offset) = DocStoreFooter::extract_footer_async(store_file).await?;
+
+        let (data_file, offset_index_file) = data_and_offset.split(footer.offset as usize);
+        let index_data = offset_index_file.read_bytes_async().await?;
+        let space_usage = StoreSpaceUsage::new(data_file.len(), offset_index_file.len());
+        let skip_index = SkipIndex::open(index_data);
+        Ok(StoreReader {
+            decompressor: footer.decompressor,
+            data: data_file,
+            cache: BlockCache {
+                cache: NonZeroUsize::new(cache_num_blocks)
+                    .map(|cache_num_blocks| Mutex::new(LruCache::new(cache_num_blocks))),
+                cache_hits: Default::default(),
+                cache_misses: Default::default(),
+            },
+            skip_index: Arc::new(skip_index),
+            space_usage,
+        })
+    }
     /// Advanced API.
     ///
     /// In most cases use [`get_async`](Self::get_async)
