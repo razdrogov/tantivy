@@ -33,6 +33,9 @@ impl SegmentAttribute {
 pub struct SegmentAttributesConfig(HashMap<String, SegmentAttribute>);
 
 impl SegmentAttributesConfig {
+    pub fn new(segment_attributes: HashMap<String, SegmentAttribute>) -> SegmentAttributesConfig {
+        SegmentAttributesConfig(segment_attributes)
+    }
     pub fn insert(
         &mut self,
         name: &str,
