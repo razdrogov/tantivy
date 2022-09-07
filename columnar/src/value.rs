@@ -81,7 +81,7 @@ impl Coerce for i64 {
         match value {
             NumericalValue::I64(val) => val,
             NumericalValue::U64(val) => val as i64,
-            NumericalValue::F64(_) => unreachable!(),
+            NumericalValue::F64(_) => unreachable!("i64::coerce"),
         }
     }
 }
@@ -91,7 +91,7 @@ impl Coerce for u64 {
         match value {
             NumericalValue::I64(val) => val as u64,
             NumericalValue::U64(val) => val,
-            NumericalValue::F64(_) => unreachable!(),
+            NumericalValue::F64(_) => unreachable!("u64::coerce"),
         }
     }
 }

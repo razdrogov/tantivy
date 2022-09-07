@@ -173,7 +173,7 @@ impl<T: Send + Sync + PartialOrd + Copy + Debug + 'static> DocSet for RangeDocSe
         doc
     }
 
-    fn size_hint(&self) -> u32 {
+    fn size_hint(&self) -> u64 {
         0 // heuristic possible by checking number of hits when fetching a block
     }
 }

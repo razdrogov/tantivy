@@ -1,9 +1,9 @@
 use std::io::{self, Write};
 
 use common::{BinarySerializable, CountingWriter};
+use izihawa_fst::raw::Fst;
+use izihawa_fst::Automaton;
 use once_cell::sync::Lazy;
-use tantivy_fst::raw::Fst;
-use tantivy_fst::Automaton;
 
 use super::term_info_store::{TermInfoStore, TermInfoStoreWriter};
 use super::{TermStreamer, TermStreamerBuilder};
@@ -11,7 +11,7 @@ use crate::directory::{FileSlice, OwnedBytes};
 use crate::postings::TermInfo;
 use crate::termdict::TermOrdinal;
 
-fn convert_fst_error(e: tantivy_fst::Error) -> io::Error {
+fn convert_fst_error(e: izihawa_fst::Error) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e)
 }
 
@@ -21,7 +21,7 @@ const FST_VERSION: u32 = 1;
 ///
 /// Inserting must be done in the order of the `keys`.
 pub struct TermDictionaryBuilder<W> {
-    fst_builder: tantivy_fst::MapBuilder<W>,
+    fst_builder: izihawa_fst::MapBuilder<W>,
     term_info_store_writer: TermInfoStoreWriter,
     term_ord: u64,
 }
@@ -31,7 +31,7 @@ where W: Write
 {
     /// Creates a new `TermDictionaryBuilder`
     pub fn create(w: W) -> io::Result<Self> {
-        let fst_builder = tantivy_fst::MapBuilder::new(w).map_err(convert_fst_error)?;
+        let fst_builder = izihawa_fst::MapBuilder::new(w).map_err(convert_fst_error)?;
         Ok(TermDictionaryBuilder {
             fst_builder,
             term_info_store_writer: TermInfoStoreWriter::new(),
@@ -88,7 +88,7 @@ where W: Write
     }
 }
 
-fn open_fst_index(fst_file: FileSlice) -> io::Result<tantivy_fst::Map<OwnedBytes>> {
+fn open_fst_index(fst_file: FileSlice) -> io::Result<izihawa_fst::Map<OwnedBytes>> {
     let bytes = fst_file.read_bytes()?;
     let fst = Fst::new(bytes).map_err(|err| {
         io::Error::new(
@@ -96,7 +96,7 @@ fn open_fst_index(fst_file: FileSlice) -> io::Result<tantivy_fst::Map<OwnedBytes
             format!("Fst data is corrupted: {:?}", err),
         )
     })?;
-    Ok(tantivy_fst::Map::from(fst))
+    Ok(izihawa_fst::Map::from(fst))
 }
 
 static EMPTY_TERM_DICT_FILE: Lazy<FileSlice> = Lazy::new(|| {
@@ -114,7 +114,7 @@ static EMPTY_TERM_DICT_FILE: Lazy<FileSlice> = Lazy::new(|| {
 /// respective `TermOrdinal`. The `TermInfoStore` then makes it
 /// possible to fetch the associated `TermInfo`.
 pub struct TermDictionary {
-    fst_index: tantivy_fst::Map<OwnedBytes>,
+    fst_index: izihawa_fst::Map<OwnedBytes>,
     term_info_store: TermInfoStore,
 }
 
@@ -132,7 +132,7 @@ impl TermDictionary {
             ));
         }
 
-        let (fst_file_slice, values_file_slice) = main_slice.split_from_end(footer_size as usize);
+        let (fst_file_slice, values_file_slice) = main_slice.split_from_end(footer_size);
         let fst_index = open_fst_index(fst_file_slice)?;
         let term_info_store = TermInfoStore::open(values_file_slice)?;
         Ok(TermDictionary {

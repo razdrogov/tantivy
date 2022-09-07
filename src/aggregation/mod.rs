@@ -308,6 +308,7 @@ pub(crate) fn f64_to_fastfield_u64(val: f64, field_type: &ColumnType) -> Option<
 #[cfg(test)]
 mod tests {
     use std::net::Ipv6Addr;
+    use std::sync::Arc;
 
     use columnar::DateTime;
     use serde_json::Value;
@@ -428,7 +429,7 @@ mod tests {
         {
             // let mut index_writer = index.writer_for_tests()?;
             let mut index_writer = index.writer_with_num_threads(1, 20_000_000)?;
-            index_writer.set_merge_policy(Box::new(NoMergePolicy));
+            index_writer.set_merge_policy(Arc::new(NoMergePolicy));
             for values in segment_and_values {
                 for (i, term) in values {
                     let i = *i;

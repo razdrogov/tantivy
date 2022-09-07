@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
-use tantivy_fst::raw::CompiledAddr;
-use tantivy_fst::{Automaton, Map};
+use async_trait::async_trait;
+use izihawa_fst::raw::CompiledAddr;
+use izihawa_fst::{Automaton, Map};
 
 use crate::query::score_combiner::DoNothingCombiner;
 use crate::query::{AutomatonWeight, BooleanWeight, EnableScoring, Occur, Query, Weight};
@@ -68,9 +69,17 @@ impl TermSetQuery {
     }
 }
 
+#[async_trait]
 impl Query for TermSetQuery {
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         Ok(Box::new(self.specialized_weight(enable_scoring.schema())?))
+    }
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        self.weight(enable_scoring)
     }
 }
 

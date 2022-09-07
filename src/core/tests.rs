@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::collector::Count;
 use crate::directory::{RamDirectory, WatchCallback};
 use crate::indexer::NoMergePolicy;
@@ -307,7 +309,7 @@ fn test_merging_segment_update_docfreq() {
     let schema = schema_builder.build();
     let index = Index::create_in_ram(schema);
     let mut writer = index.writer_for_tests().unwrap();
-    writer.set_merge_policy(Box::new(NoMergePolicy));
+    writer.set_merge_policy(Arc::new(NoMergePolicy));
     for _ in 0..5 {
         writer.add_document(doc!(text_field=>"hello")).unwrap();
     }

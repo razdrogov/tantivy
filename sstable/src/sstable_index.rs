@@ -81,7 +81,7 @@ impl SSTableIndex {
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct BlockAddr {
-    pub byte_range: Range<usize>,
+    pub byte_range: Range<u64>,
     pub first_ordinal: u64,
 }
 
@@ -129,7 +129,7 @@ impl SSTableIndexBuilder {
         }
     }
 
-    pub fn add_block(&mut self, last_key: &[u8], byte_range: Range<usize>, first_ordinal: u64) {
+    pub fn add_block(&mut self, last_key: &[u8], byte_range: Range<u64>, first_ordinal: u64) {
         self.index.blocks.push(BlockMeta {
             last_key_or_greater: last_key.to_vec(),
             block_addr: BlockAddr {

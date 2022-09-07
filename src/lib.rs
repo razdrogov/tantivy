@@ -177,8 +177,8 @@ pub use self::docset::{DocSet, TERMINATED};
 pub use crate::core::json_utils;
 pub use crate::core::{
     Executor, Index, IndexBuilder, IndexMeta, IndexSettings, IndexSortByField, InvertedIndexReader,
-    Order, Searcher, SearcherGeneration, Segment, SegmentComponent, SegmentId, SegmentMeta,
-    SegmentReader, SingleSegmentIndexWriter,
+    Order, Searcher, SearcherGeneration, Segment, SegmentAttributesMerger, SegmentComponent,
+    SegmentId, SegmentMeta, SegmentReader, SingleSegmentIndexWriter,
 };
 pub use crate::directory::Directory;
 pub use crate::indexer::operation::UserOperation;
@@ -300,6 +300,8 @@ pub struct DocAddress {
 
 #[cfg(test)]
 pub mod tests {
+    use std::sync::Arc;
+
     use common::{BinarySerializable, FixedSize};
     use rand::distributions::{Bernoulli, Uniform};
     use rand::rngs::StdRng;
@@ -952,7 +954,7 @@ pub mod tests {
         let index_reader = index.reader()?;
 
         let mut index_writer = index.writer_for_tests()?;
-        index_writer.set_merge_policy(Box::new(NoMergePolicy));
+        index_writer.set_merge_policy(Arc::new(NoMergePolicy));
 
         for doc_id in 0u64..DOC_COUNT {
             index_writer.add_document(doc!(id => doc_id))?;
@@ -1005,7 +1007,7 @@ pub mod tests {
         let schema = builder.build();
         let index = Index::create_in_dir(&index_path, schema)?;
         let mut writer = index.writer(50_000_000)?;
-        writer.set_merge_policy(Box::new(NoMergePolicy));
+        writer.set_merge_policy(Arc::new(NoMergePolicy));
         for _ in 0..5000 {
             writer.add_document(doc!(body => "foo"))?;
             writer.add_document(doc!(body => "boo"))?;

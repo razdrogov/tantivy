@@ -1,7 +1,8 @@
 use std::clone::Clone;
 use std::sync::Arc;
 
-use tantivy_fst::Regex;
+use async_trait::async_trait;
+use izihawa_fst::Regex;
 
 use crate::error::TantivyError;
 use crate::query::{AutomatonWeight, EnableScoring, Query, Weight};
@@ -80,9 +81,17 @@ impl RegexQuery {
     }
 }
 
+#[async_trait]
 impl Query for RegexQuery {
     fn weight(&self, _enabled_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         Ok(Box::new(self.specialized_weight()))
+    }
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        self.weight(enable_scoring)
     }
 }
 
@@ -90,7 +99,7 @@ impl Query for RegexQuery {
 mod test {
     use std::sync::Arc;
 
-    use tantivy_fst::Regex;
+    use izihawa_fst::Regex;
 
     use super::RegexQuery;
     use crate::collector::TopDocs;

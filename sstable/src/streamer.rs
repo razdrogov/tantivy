@@ -1,8 +1,8 @@
 use std::io;
 use std::ops::Bound;
 
-use tantivy_fst::automaton::AlwaysMatch;
-use tantivy_fst::Automaton;
+use izihawa_fst::automaton::AlwaysMatch;
+use izihawa_fst::Automaton;
 
 use crate::dictionary::Dictionary;
 use crate::{DeltaReader, SSTable, TermOrdinal};
@@ -11,9 +11,9 @@ use crate::{DeltaReader, SSTable, TermOrdinal};
 /// a range of terms that should be streamed.
 pub struct StreamerBuilder<'a, TSSTable, A = AlwaysMatch>
 where
-    A: Automaton,
-    A::State: Clone,
-    TSSTable: SSTable,
+    A: Send + Automaton,
+    A::State: Send + Clone,
+    TSSTable: Send + SSTable,
 {
     term_dict: &'a Dictionary<TSSTable>,
     automaton: A,
@@ -32,9 +32,9 @@ fn bound_as_byte_slice(bound: &Bound<Vec<u8>>) -> Bound<&[u8]> {
 
 impl<'a, TSSTable, A> StreamerBuilder<'a, TSSTable, A>
 where
-    A: Automaton,
-    A::State: Clone,
-    TSSTable: SSTable,
+    A: Send + Automaton,
+    A::State: Send + Clone,
+    TSSTable: Send + SSTable,
 {
     pub(crate) fn new(term_dict: &'a Dictionary<TSSTable>, automaton: A) -> Self {
         StreamerBuilder {
@@ -146,9 +146,9 @@ where
 /// Terms are guaranteed to be sorted.
 pub struct Streamer<'a, TSSTable, A = AlwaysMatch>
 where
-    A: Automaton,
-    A::State: Clone,
-    TSSTable: SSTable,
+    A: Send + Automaton,
+    A::State: Send + Clone,
+    TSSTable: Send + SSTable,
 {
     automaton: A,
     states: Vec<A::State>,
@@ -180,9 +180,9 @@ where TSSTable: SSTable
 
 impl<'a, TSSTable, A> Streamer<'a, TSSTable, A>
 where
-    A: Automaton,
-    A::State: Clone,
-    TSSTable: SSTable,
+    A: Send + Automaton,
+    A::State: Send + Clone,
+    TSSTable: Send + SSTable,
 {
     /// Advance position the stream on the next item.
     /// Before the first call to `.advance()`, the stream
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn test_sstable_search() -> io::Result<()> {
         let term_dict = create_test_dictionary()?;
-        let ptn = tantivy_fst::Regex::new("ab.*t.*").unwrap();
+        let ptn = izihawa_fst::Regex::new("ab.*t.*").unwrap();
         let mut term_streamer = term_dict.search(ptn).into_stream()?;
         assert!(term_streamer.advance());
         assert_eq!(term_streamer.key(), b"abalation");

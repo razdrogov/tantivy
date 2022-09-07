@@ -4,11 +4,12 @@
 
 use std::ops::{Bound, RangeInclusive};
 
+use async_trait::async_trait;
 use columnar::{ColumnType, HasAssociatedColumnType, MonotonicallyMappableToU64};
 
 use super::fast_field_range_query::RangeDocSet;
 use super::map_bound;
-use crate::query::{ConstScorer, EmptyScorer, Explanation, Query, Scorer, Weight};
+use crate::query::{ConstScorer, EmptyScorer, EnableScoring, Explanation, Query, Scorer, Weight};
 use crate::{DocId, DocSet, Score, SegmentReader, TantivyError};
 
 /// `FastFieldRangeWeight` uses the fast field to execute range queries.
@@ -54,12 +55,21 @@ impl FastFieldRangeWeight {
     }
 }
 
+#[async_trait]
 impl Query for FastFieldRangeWeight {
     fn weight(
         &self,
         _enable_scoring: crate::query::EnableScoring<'_>,
     ) -> crate::Result<Box<dyn Weight>> {
         Ok(Box::new(self.clone()))
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        self.weight(enable_scoring)
     }
 }
 

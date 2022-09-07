@@ -21,10 +21,10 @@ pub trait FileHandle: 'static + Send + Sync + HasLen + fmt::Debug {
     /// Reads a slice of bytes.
     ///
     /// This method may panic if the range requested is invalid.
-    fn read_bytes(&self, range: Range<usize>) -> io::Result<OwnedBytes>;
+    fn read_bytes(&self, range: Range<u64>) -> io::Result<OwnedBytes>;
 
     #[doc(hidden)]
-    async fn read_bytes_async(&self, _byte_range: Range<usize>) -> io::Result<OwnedBytes> {
+    async fn read_bytes_async(&self, _byte_range: Range<u64>) -> io::Result<OwnedBytes> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Async read is not supported.",
@@ -34,12 +34,12 @@ pub trait FileHandle: 'static + Send + Sync + HasLen + fmt::Debug {
 
 #[async_trait]
 impl FileHandle for &'static [u8] {
-    fn read_bytes(&self, range: Range<usize>) -> io::Result<OwnedBytes> {
-        let bytes = &self[range];
+    fn read_bytes(&self, range: Range<u64>) -> io::Result<OwnedBytes> {
+        let bytes = &self[range.start as usize..range.end as usize];
         Ok(OwnedBytes::new(bytes))
     }
 
-    async fn read_bytes_async(&self, byte_range: Range<usize>) -> io::Result<OwnedBytes> {
+    async fn read_bytes_async(&self, byte_range: Range<u64>) -> io::Result<OwnedBytes> {
         Ok(self.read_bytes(byte_range)?)
     }
 }
@@ -58,7 +58,7 @@ where B: StableDeref + Deref<Target = [u8]> + 'static + Send + Sync
 #[derive(Clone)]
 pub struct FileSlice {
     data: Arc<dyn FileHandle>,
-    range: Range<usize>,
+    range: Range<u64>,
 }
 
 impl fmt::Debug for FileSlice {
@@ -77,15 +77,15 @@ impl fmt::Debug for FileSlice {
 ///
 /// This function panics, if the result would suggest something outside
 /// of the bounds of the original range.
-fn combine_ranges<R: RangeBounds<usize>>(orig_range: Range<usize>, rel_range: R) -> Range<usize> {
-    let start: usize = orig_range.start
+fn combine_ranges<R: RangeBounds<u64>>(orig_range: Range<u64>, rel_range: R) -> Range<u64> {
+    let start: u64 = orig_range.start
         + match rel_range.start_bound().cloned() {
             std::ops::Bound::Included(rel_start) => rel_start,
             std::ops::Bound::Excluded(rel_start) => rel_start + 1,
             std::ops::Bound::Unbounded => 0,
         };
     assert!(start <= orig_range.end);
-    let end: usize = match rel_range.end_bound().cloned() {
+    let end: u64 = match rel_range.end_bound().cloned() {
         std::ops::Bound::Included(rel_end) => orig_range.start + rel_end + 1,
         std::ops::Bound::Excluded(rel_end) => orig_range.start + rel_end,
         std::ops::Bound::Unbounded => orig_range.end,
@@ -105,7 +105,7 @@ impl FileSlice {
     /// Wraps a FileHandle.
     #[doc(hidden)]
     #[must_use]
-    pub fn new_with_num_bytes(file_handle: Arc<dyn FileHandle>, num_bytes: usize) -> Self {
+    pub fn new_with_num_bytes(file_handle: Arc<dyn FileHandle>, num_bytes: u64) -> Self {
         FileSlice {
             data: file_handle,
             range: 0..num_bytes,
@@ -119,7 +119,7 @@ impl FileSlice {
     /// Panics if `byte_range.end` exceeds the filesize.
     #[must_use]
     #[inline]
-    pub fn slice<R: RangeBounds<usize>>(&self, byte_range: R) -> FileSlice {
+    pub fn slice<R: RangeBounds<u64>>(&self, byte_range: R) -> FileSlice {
         FileSlice {
             data: self.data.clone(),
             range: combine_ranges(self.range.clone(), byte_range),
@@ -139,20 +139,23 @@ impl FileSlice {
     /// In particular, it is  up to the `Directory` implementation
     /// to handle caching if needed.
     pub fn read_bytes(&self) -> io::Result<OwnedBytes> {
-        self.data.read_bytes(self.range.clone())
+        self.data
+            .read_bytes(self.range.start as u64..self.range.end as u64)
     }
 
     #[doc(hidden)]
     pub async fn read_bytes_async(&self) -> io::Result<OwnedBytes> {
-        self.data.read_bytes_async(self.range.clone()).await
+        self.data
+            .read_bytes_async(self.range.start as u64..self.range.end as u64)
+            .await
     }
 
     /// Reads a specific slice of data.
     ///
     /// This is equivalent to running `file_slice.slice(from, to).read_bytes()`.
-    pub fn read_bytes_slice(&self, range: Range<usize>) -> io::Result<OwnedBytes> {
+    pub fn read_bytes_slice(&self, range: Range<u64>) -> io::Result<OwnedBytes> {
         assert!(
-            range.end <= self.len(),
+            range.end as u64 <= self.len(),
             "end of requested range exceeds the fileslice length ({} > {})",
             range.end,
             self.len()
@@ -162,7 +165,7 @@ impl FileSlice {
     }
 
     #[doc(hidden)]
-    pub async fn read_bytes_slice_async(&self, byte_range: Range<usize>) -> io::Result<OwnedBytes> {
+    pub async fn read_bytes_slice_async(&self, byte_range: Range<u64>) -> io::Result<OwnedBytes> {
         assert!(
             self.range.start + byte_range.end <= self.range.end,
             "`to` exceeds the fileslice length"
@@ -178,7 +181,7 @@ impl FileSlice {
     /// `file_slice[..split_offset]` and `file_slice[split_offset..]`.
     ///
     /// This operation is cheap and must not copy any underlying data.
-    pub fn split(self, left_len: usize) -> (FileSlice, FileSlice) {
+    pub fn split(self, left_len: u64) -> (FileSlice, FileSlice) {
         let left = self.slice_to(left_len);
         let right = self.slice_from(left_len);
         (left, right)
@@ -186,8 +189,8 @@ impl FileSlice {
 
     /// Splits the file slice at the given offset and return two file slices.
     /// `file_slice[..split_offset]` and `file_slice[split_offset..]`.
-    pub fn split_from_end(self, right_len: usize) -> (FileSlice, FileSlice) {
-        let left_len = self.len() - right_len;
+    pub fn split_from_end(self, right_len: u64) -> (FileSlice, FileSlice) {
+        let left_len = self.len() - right_len as u64;
         self.split(left_len)
     }
 
@@ -196,7 +199,7 @@ impl FileSlice {
     ///
     /// Equivalent to `.slice(from_offset, self.len())`
     #[must_use]
-    pub fn slice_from(&self, from_offset: usize) -> FileSlice {
+    pub fn slice_from(&self, from_offset: u64) -> FileSlice {
         self.slice(from_offset..self.len())
     }
 
@@ -204,7 +207,7 @@ impl FileSlice {
     ///
     /// Equivalent to `.slice(self.len() - from_offset, self.len())`
     #[must_use]
-    pub fn slice_from_end(&self, from_offset: usize) -> FileSlice {
+    pub fn slice_from_end(&self, from_offset: u64) -> FileSlice {
         self.slice(self.len() - from_offset..self.len())
     }
 
@@ -213,40 +216,40 @@ impl FileSlice {
     ///
     /// Equivalent to `.slice(0, to_offset)`
     #[must_use]
-    pub fn slice_to(&self, to_offset: usize) -> FileSlice {
+    pub fn slice_to(&self, to_offset: u64) -> FileSlice {
         self.slice(0..to_offset)
     }
 
     /// Returns the byte count of the FileSlice.
     pub fn num_bytes(&self) -> ByteCount {
-        self.range.len().into()
+        (self.range.end - self.range.start).into()
     }
 }
 
 #[async_trait]
 impl FileHandle for FileSlice {
-    fn read_bytes(&self, range: Range<usize>) -> io::Result<OwnedBytes> {
+    fn read_bytes(&self, range: Range<u64>) -> io::Result<OwnedBytes> {
         self.read_bytes_slice(range)
     }
 
-    async fn read_bytes_async(&self, byte_range: Range<usize>) -> io::Result<OwnedBytes> {
+    async fn read_bytes_async(&self, byte_range: Range<u64>) -> io::Result<OwnedBytes> {
         self.read_bytes_slice_async(byte_range).await
     }
 }
 
 impl HasLen for FileSlice {
-    fn len(&self) -> usize {
-        self.range.len()
+    fn len(&self) -> u64 {
+        self.range.end - self.range.start
     }
 }
 
 #[async_trait]
 impl FileHandle for OwnedBytes {
-    fn read_bytes(&self, range: Range<usize>) -> io::Result<OwnedBytes> {
-        Ok(self.slice(range))
+    fn read_bytes(&self, range: Range<u64>) -> io::Result<OwnedBytes> {
+        Ok(self.slice(range.start as usize..range.end as usize))
     }
 
-    async fn read_bytes_async(&self, range: Range<usize>) -> io::Result<OwnedBytes> {
+    async fn read_bytes_async(&self, range: Range<u64>) -> io::Result<OwnedBytes> {
         self.read_bytes(range)
     }
 }

@@ -78,9 +78,9 @@ fn split_into_skips_and_postings(
 }
 
 impl BlockSegmentPostings {
-    pub(crate) fn open(
+    fn internal_open(
         doc_freq: u32,
-        data: FileSlice,
+        bytes: OwnedBytes,
         record_option: IndexRecordOption,
         requested_option: IndexRecordOption,
     ) -> io::Result<BlockSegmentPostings> {
@@ -89,8 +89,6 @@ impl BlockSegmentPostings {
             (_, IndexRecordOption::Basic) => FreqReadingOption::SkipFreq,
             (_, _) => FreqReadingOption::ReadFreq,
         };
-
-        let bytes = data.read_bytes()?;
         let (skip_data_opt, postings_data) = split_into_skips_and_postings(doc_freq, bytes)?;
         let skip_reader = match skip_data_opt {
             Some(skip_data) => SkipReader::new(skip_data, doc_freq, record_option),
@@ -109,6 +107,27 @@ impl BlockSegmentPostings {
         };
         block_segment_postings.load_block();
         Ok(block_segment_postings)
+    }
+
+    pub(crate) fn open(
+        doc_freq: u32,
+        data: FileSlice,
+        record_option: IndexRecordOption,
+        requested_option: IndexRecordOption,
+    ) -> io::Result<BlockSegmentPostings> {
+        let bytes = data.read_bytes()?;
+        Self::internal_open(doc_freq, bytes, record_option, requested_option)
+    }
+
+    #[cfg(feature = "quickwit")]
+    pub(crate) async fn open_async(
+        doc_freq: u32,
+        data: FileSlice,
+        record_option: IndexRecordOption,
+        requested_option: IndexRecordOption,
+    ) -> io::Result<BlockSegmentPostings> {
+        let bytes = data.read_bytes_async().await?;
+        Self::internal_open(doc_freq, bytes, record_option, requested_option)
     }
 
     /// Returns the block_max_score for the current block.

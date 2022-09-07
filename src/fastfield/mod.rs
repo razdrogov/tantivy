@@ -78,6 +78,7 @@ mod tests {
     use std::net::Ipv6Addr;
     use std::ops::{Range, RangeInclusive};
     use std::path::Path;
+    use std::sync::Arc;
 
     use columnar::{Column, MonotonicallyMappableToU64, StrColumn};
     use common::{ByteCount, HasLen, TerminatingWrite};
@@ -280,7 +281,6 @@ mod tests {
         }
         let file = directory.open_read(path).unwrap();
         assert_eq!(file.len(), 265);
-
         {
             let fast_field_readers = FastFieldReaders::open(file, schema).unwrap();
             let col = fast_field_readers
@@ -417,7 +417,7 @@ mod tests {
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
         let mut index_writer = index.writer_for_tests().unwrap();
-        index_writer.set_merge_policy(Box::new(NoMergePolicy));
+        index_writer.set_merge_policy(Arc::new(NoMergePolicy));
         index_writer
             .add_document(doc!(date_field => DateTime::from_utc(OffsetDateTime::now_utc())))
             .unwrap();
@@ -453,7 +453,7 @@ mod tests {
         {
             // first segment
             let mut index_writer = index.writer_for_tests().unwrap();
-            index_writer.set_merge_policy(Box::new(NoMergePolicy));
+            index_writer.set_merge_policy(Arc::new(NoMergePolicy));
             index_writer
                 .add_document(doc!(
                 text_field => "BBBBB", // term ord 1
@@ -601,7 +601,7 @@ mod tests {
         {
             // first segment
             let mut index_writer = index.writer_for_tests()?;
-            index_writer.set_merge_policy(Box::new(NoMergePolicy));
+            index_writer.set_merge_policy(Arc::new(NoMergePolicy));
             index_writer.add_document(doc!(
                 text_field => "BBBBB", // term_ord 1
             ))?;
@@ -697,7 +697,7 @@ mod tests {
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
         let mut index_writer = index.writer_for_tests()?;
-        index_writer.set_merge_policy(Box::new(NoMergePolicy));
+        index_writer.set_merge_policy(Arc::new(NoMergePolicy));
         index_writer.add_document(doc!(
             date_field => DateTime::from_u64(1i64.to_u64()),
             multi_date_field => DateTime::from_u64(2i64.to_u64()),

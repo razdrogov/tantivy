@@ -8,6 +8,7 @@ pub struct SingleSegmentIndexWriter {
     segment_writer: SegmentWriter,
     segment: Segment,
     opstamp: Opstamp,
+    segment_attributes: Option<serde_json::Value>,
 }
 
 impl SingleSegmentIndexWriter {
@@ -18,7 +19,12 @@ impl SingleSegmentIndexWriter {
             segment_writer,
             segment,
             opstamp: 0,
+            segment_attributes: None,
         })
+    }
+
+    pub fn set_segment_attributes(&mut self, segment_attributes: serde_json::Value) {
+        self.segment_attributes = Some(segment_attributes)
     }
 
     pub fn mem_usage(&self) -> usize {
@@ -43,6 +49,7 @@ impl SingleSegmentIndexWriter {
             schema: index.schema(),
             opstamp: 0,
             payload: None,
+            index_attributes: self.segment_attributes,
         };
         save_metas(&index_meta, index.directory())?;
         index.directory().sync_directory()?;

@@ -17,7 +17,7 @@ use super::metric::{
 };
 use crate::aggregation::bucket::SegmentTermCollectorComposite;
 
-pub(crate) trait SegmentAggregationCollector: CollectorClone + Debug {
+pub(crate) trait SegmentAggregationCollector: Send + CollectorClone + Debug {
     fn add_intermediate_aggregation_result(
         self: Box<Self>,
         agg_with_accessor: &AggregationsWithAccessor,

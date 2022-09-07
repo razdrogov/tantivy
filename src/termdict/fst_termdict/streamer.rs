@@ -1,8 +1,8 @@
 use std::io;
 
-use tantivy_fst::automaton::AlwaysMatch;
-use tantivy_fst::map::{Stream, StreamBuilder};
-use tantivy_fst::{Automaton, IntoStreamer, Streamer};
+use izihawa_fst::automaton::AlwaysMatch;
+use izihawa_fst::map::{Stream, StreamBuilder};
+use izihawa_fst::{Automaton, IntoStreamer, Streamer};
 
 use super::TermDictionary;
 use crate::postings::TermInfo;

@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+
 use super::MoreLikeThis;
 use crate::query::{EnableScoring, Query, Weight};
 use crate::schema::{Field, Value};
@@ -41,6 +43,7 @@ impl MoreLikeThisQuery {
     }
 }
 
+#[async_trait]
 impl Query for MoreLikeThisQuery {
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         let searcher = match enable_scoring {
@@ -59,6 +62,34 @@ impl Query for MoreLikeThisQuery {
                 .mlt
                 .query_with_document_fields(searcher, doc_fields)?
                 .weight(enable_scoring),
+        }
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        let searcher = match enable_scoring {
+            EnableScoring::Enabled { searcher, .. } => searcher,
+            EnableScoring::Disabled { .. } => {
+                let err = "MoreLikeThisQuery requires to enable scoring.".to_string();
+                return Err(crate::TantivyError::InvalidArgument(err));
+            }
+        };
+        match &self.target {
+            TargetDocument::DocumentAdress(doc_address) => {
+                self.mlt
+                    .query_with_document(searcher, *doc_address)?
+                    .weight_async(enable_scoring)
+                    .await
+            }
+            TargetDocument::DocumentFields(doc_fields) => {
+                self.mlt
+                    .query_with_document_fields(searcher, doc_fields)?
+                    .weight_async(enable_scoring)
+                    .await
+            }
         }
     }
 }

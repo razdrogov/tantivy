@@ -101,9 +101,9 @@ impl BlockCompressorImpl {
         self.compressor
             .compress_into(data, &mut self.intermediary_buffer)?;
 
-        let start_offset = self.writer.written_bytes() as usize;
+        let start_offset = self.writer.written_bytes();
         self.writer.write_all(&self.intermediary_buffer)?;
-        let end_offset = self.writer.written_bytes() as usize;
+        let end_offset = self.writer.written_bytes();
 
         self.register_checkpoint(Checkpoint {
             doc_range: self.first_doc_in_block..self.first_doc_in_block + num_docs_in_block,
@@ -123,7 +123,7 @@ impl BlockCompressorImpl {
     /// not be decompressed and then recompressed.
     fn stack(&mut self, store_reader: StoreReader) -> io::Result<()> {
         let doc_shift = self.first_doc_in_block;
-        let start_shift = self.writer.written_bytes() as usize;
+        let start_shift = self.writer.written_bytes();
 
         // just bulk write all of the block of the given reader.
         self.writer

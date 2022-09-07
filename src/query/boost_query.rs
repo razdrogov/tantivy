@@ -1,5 +1,7 @@
 use std::fmt;
 
+use async_trait::async_trait;
+
 use crate::docset::BUFFER_LEN;
 use crate::fastfield::AliveBitSet;
 use crate::query::explanation::does_not_match;
@@ -38,9 +40,24 @@ impl fmt::Debug for BoostQuery {
     }
 }
 
+#[async_trait]
 impl Query for BoostQuery {
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         let weight_without_boost = self.query.weight(enable_scoring)?;
+        let boosted_weight = if enable_scoring.is_scoring_enabled() {
+            Box::new(BoostWeight::new(weight_without_boost, self.boost))
+        } else {
+            weight_without_boost
+        };
+        Ok(boosted_weight)
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        let weight_without_boost = self.query.weight_async(enable_scoring).await?;
         let boosted_weight = if enable_scoring.is_scoring_enabled() {
             Box::new(BoostWeight::new(weight_without_boost, self.boost))
         } else {
@@ -67,9 +84,19 @@ impl BoostWeight {
     }
 }
 
+#[async_trait]
 impl Weight for BoostWeight {
     fn scorer(&self, reader: &SegmentReader, boost: Score) -> crate::Result<Box<dyn Scorer>> {
         self.weight.scorer(reader, boost * self.boost)
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn scorer_async(
+        &self,
+        reader: &SegmentReader,
+        boost: Score,
+    ) -> crate::Result<Box<dyn Scorer>> {
+        self.weight.scorer_async(reader, boost * self.boost).await
     }
 
     fn explain(&self, reader: &SegmentReader, doc: u32) -> crate::Result<Explanation> {
@@ -117,7 +144,7 @@ impl<S: Scorer> DocSet for BoostScorer<S> {
         self.underlying.doc()
     }
 
-    fn size_hint(&self) -> u32 {
+    fn size_hint(&self) -> u64 {
         self.underlying.size_hint()
     }
 

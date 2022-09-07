@@ -2,7 +2,7 @@ use std::io;
 use std::sync::Arc;
 
 use common::BitSet;
-use tantivy_fst::Automaton;
+use izihawa_fst::Automaton;
 
 use crate::core::SegmentReader;
 use crate::query::{BitSetDocSet, ConstScorer, Explanation, Scorer, Weight};
@@ -32,7 +32,10 @@ where
     fn automaton_stream<'a>(
         &'a self,
         term_dict: &'a TermDictionary,
-    ) -> io::Result<TermStreamer<'a, &'a A>> {
+    ) -> io::Result<TermStreamer<'a, &'a A>>
+    where
+        <A as Automaton>::State: std::marker::Send,
+    {
         let automaton: &A = &self.automaton;
         let term_stream_builder = term_dict.search(automaton);
         term_stream_builder.into_stream()
@@ -42,7 +45,7 @@ where
 impl<A> Weight for AutomatonWeight<A>
 where
     A: Automaton + Send + Sync + 'static,
-    A::State: Clone,
+    A::State: Send + Clone,
 {
     fn scorer(&self, reader: &SegmentReader, boost: Score) -> crate::Result<Box<dyn Scorer>> {
         let max_doc = reader.max_doc();
@@ -84,7 +87,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use tantivy_fst::Automaton;
+    use izihawa_fst::Automaton;
 
     use super::AutomatonWeight;
     use crate::docset::TERMINATED;

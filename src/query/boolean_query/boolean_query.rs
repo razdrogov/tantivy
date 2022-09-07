@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+
 use super::boolean_weight::BooleanWeight;
 use crate::query::{EnableScoring, Occur, Query, SumWithCoordsCombiner, TermQuery, Weight};
 use crate::schema::{IndexRecordOption, Term};
@@ -141,13 +143,35 @@ impl From<Vec<(Occur, Box<dyn Query>)>> for BooleanQuery {
     }
 }
 
+#[async_trait]
 impl Query for BooleanQuery {
     fn weight(&self, enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         let sub_weights = self
             .subqueries
             .iter()
-            .map(|(occur, subquery)| Ok((*occur, subquery.weight(enable_scoring)?)))
+            .map(|&(ref occur, ref subquery)| Ok((*occur, subquery.weight(enable_scoring)?)))
             .collect::<crate::Result<_>>()?;
+        Ok(Box::new(BooleanWeight::new(
+            sub_weights,
+            enable_scoring.is_scoring_enabled(),
+            Box::new(SumWithCoordsCombiner::default),
+        )))
+    }
+
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        let sub_weights = futures::future::join_all(self.subqueries.iter().map(
+            |&(ref occur, ref subquery)| async move {
+                let weight = subquery.weight_async(enable_scoring).await?;
+                Ok((*occur, weight))
+            },
+        ))
+        .await
+        .into_iter()
+        .collect::<crate::Result<Vec<_>>>()?;
         Ok(Box::new(BooleanWeight::new(
             sub_weights,
             enable_scoring.is_scoring_enabled(),

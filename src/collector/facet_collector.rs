@@ -462,374 +462,374 @@ impl FacetCounts {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-    use std::iter;
-
-    use columnar::Dictionary;
-    use rand::distributions::Uniform;
-    use rand::prelude::SliceRandom;
-    use rand::{thread_rng, Rng};
-
-    use super::{FacetCollector, FacetCounts};
-    use crate::collector::facet_collector::compress_mapping;
-    use crate::collector::Count;
-    use crate::core::Index;
-    use crate::query::{AllQuery, QueryParser, TermQuery};
-    use crate::schema::{Document, Facet, FacetOptions, IndexRecordOption, Schema};
-    use crate::Term;
-
-    fn test_collapse_mapping_aux(
-        facet_terms: &[&str],
-        facet_params: &[&str],
-        expected_collapsed_mapping: &[(u64, usize)],
-    ) {
-        let mut facets: Vec<Facet> = facet_terms.iter().map(Facet::from).collect();
-        facets.sort();
-        let facet_terms: Vec<&str> = facets.iter().map(|facet| facet.encoded_str()).collect();
-        let dictionary = Dictionary::build_for_tests(&facet_terms);
-        let facet_params: BTreeSet<Facet> = facet_params.iter().map(Facet::from).collect();
-        let collapse_mapping = super::compute_collapse_mapping(&dictionary, &facet_params).unwrap();
-        assert_eq!(&collapse_mapping[..], expected_collapsed_mapping);
-    }
-
-    #[test]
-    fn test_collapse_simple() {
-        test_collapse_mapping_aux(&["/facet/a", "/facet/b"], &["/facet"], &[(0, 1), (1, 1)]);
-        test_collapse_mapping_aux(
-            &["/facet/a", "/facet/a2", "/facet/b"],
-            &["/facet"],
-            &[(0, 1), (1, 1), (2, 1)],
-        );
-        test_collapse_mapping_aux(&["/facet/a", "/facet/a/2"], &["/facet"], &[(0, 1), (0, 1)]);
-        test_collapse_mapping_aux(
-            &["/facet/a", "/facet/a/2", "/facet/b"],
-            &["/facet"],
-            &[(0, 1), (0, 1), (2, 1)],
-        );
-    }
-
-    fn test_compress_mapping_aux(
-        collapsed_mapping: &[(u64, usize)],
-        expected_compressed_collapsed_mapping: &[usize],
-        expected_unique_facet_ords: &[(u64, usize)],
-    ) {
-        let (compressed_collapsed_mapping, unique_facet_ords) = compress_mapping(collapsed_mapping);
-        assert_eq!(
-            compressed_collapsed_mapping,
-            expected_compressed_collapsed_mapping
-        );
-        assert_eq!(unique_facet_ords, expected_unique_facet_ords);
-    }
-
-    #[test]
-    fn test_compress_mapping() {
-        test_compress_mapping_aux(&[], &[], &[]);
-        test_compress_mapping_aux(&[(1, 2)], &[0], &[(1, 2)]);
-        test_compress_mapping_aux(&[(1, 2), (1, 2)], &[0, 0], &[(1, 2)]);
-        test_compress_mapping_aux(
-            &[(1, 2), (5, 2), (5, 2), (6, 3), (8, 3)],
-            &[0, 1, 1, 2, 3],
-            &[(1, 2), (5, 2), (6, 3), (8, 3)],
-        );
-    }
-
-    #[test]
-    fn test_facet_collector_simple() {
-        let mut schema_builder = Schema::builder();
-        let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
-        let schema = schema_builder.build();
-        let index = Index::create_in_ram(schema);
-        let mut index_writer = index.writer_for_tests().unwrap();
-        index_writer
-            .add_document(doc!(facet_field=>Facet::from("/facet/a")))
-            .unwrap();
-        index_writer
-            .add_document(doc!(facet_field=>Facet::from("/facet/b")))
-            .unwrap();
-        index_writer
-            .add_document(doc!(facet_field=>Facet::from("/facet/b")))
-            .unwrap();
-        index_writer
-            .add_document(doc!(facet_field=>Facet::from("/facet/c")))
-            .unwrap();
-        index_writer.commit().unwrap();
-        let searcher = index.reader().unwrap().searcher();
-        let mut facet_collector = FacetCollector::for_field("facet");
-        facet_collector.add_facet("/facet");
-        let counts: FacetCounts = searcher.search(&AllQuery, &facet_collector).unwrap();
-        let facets: Vec<(&Facet, u64)> = counts.top_k("/facet", 1);
-        assert_eq!(facets, vec![(&Facet::from("/facet/b"), 2)]);
-    }
-
-    #[test]
-    fn test_facet_collector_drilldown() {
-        let mut schema_builder = Schema::builder();
-        let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
-        let schema = schema_builder.build();
-        let index = Index::create_in_ram(schema);
-
-        let mut index_writer = index.writer_for_tests().unwrap();
-        let num_facets: usize = 3 * 4 * 5;
-        let facets: Vec<Facet> = (0..num_facets)
-            .map(|mut n| {
-                let top = n % 3;
-                n /= 3;
-                let mid = n % 4;
-                n /= 4;
-                let leaf = n % 5;
-                Facet::from(&format!("/top{}/mid{}/leaf{}", top, mid, leaf))
-            })
-            .collect();
-        for i in 0..num_facets * 10 {
-            let mut doc = Document::new();
-            doc.add_facet(facet_field, facets[i % num_facets].clone());
-            index_writer.add_document(doc).unwrap();
-        }
-        index_writer.commit().unwrap();
-        let reader = index.reader().unwrap();
-        let searcher = reader.searcher();
-        let mut facet_collector = FacetCollector::for_field("facet");
-        facet_collector.add_facet(Facet::from("/top1"));
-        let counts = searcher.search(&AllQuery, &facet_collector).unwrap();
-
-        {
-            let facets: Vec<(String, u64)> = counts
-                .get("/top1")
-                .map(|(facet, count)| (facet.to_string(), count))
-                .collect();
-            assert_eq!(
-                facets,
-                [
-                    ("/top1/mid0", 50),
-                    ("/top1/mid1", 50),
-                    ("/top1/mid2", 50),
-                    ("/top1/mid3", 50),
-                ]
-                .iter()
-                .map(|&(facet_str, count)| (String::from(facet_str), count))
-                .collect::<Vec<_>>()
-            );
-        }
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "Tried to add a facet which is a descendant of an already added facet."
-    )]
-    fn test_misused_facet_collector() {
-        let mut facet_collector = FacetCollector::for_field("facet");
-        facet_collector.add_facet(Facet::from("/country"));
-        facet_collector.add_facet(Facet::from("/country/europe"));
-    }
-
-    #[test]
-    fn test_doc_unsorted_multifacet() -> crate::Result<()> {
-        let mut schema_builder = Schema::builder();
-        let facet_field = schema_builder.add_facet_field("facets", FacetOptions::default());
-        let schema = schema_builder.build();
-        let index = Index::create_in_ram(schema);
-        let mut index_writer = index.writer_for_tests()?;
-        index_writer.add_document(doc!(
-            facet_field => Facet::from_text(&"/subjects/A/a").unwrap(),
-            facet_field => Facet::from_text(&"/subjects/B/a").unwrap(),
-            facet_field => Facet::from_text(&"/subjects/A/b").unwrap(),
-            facet_field => Facet::from_text(&"/subjects/B/b").unwrap(),
-        ))?;
-        index_writer.commit()?;
-        let reader = index.reader()?;
-        let searcher = reader.searcher();
-        assert_eq!(searcher.num_docs(), 1);
-        let mut facet_collector = FacetCollector::for_field("facets");
-        facet_collector.add_facet("/subjects");
-        let counts = searcher.search(&AllQuery, &facet_collector)?;
-        let facets: Vec<(&Facet, u64)> = counts.get("/subjects").collect();
-        assert_eq!(facets[0].1, 1);
-        Ok(())
-    }
-
-    #[test]
-    fn test_doc_search_by_facet() -> crate::Result<()> {
-        let mut schema_builder = Schema::builder();
-        let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
-        let schema = schema_builder.build();
-        let index = Index::create_in_ram(schema);
-        let mut index_writer = index.writer_for_tests()?;
-        index_writer.add_document(doc!(
-            facet_field => Facet::from_text(&"/A/A").unwrap(),
-        ))?;
-        index_writer.add_document(doc!(
-            facet_field => Facet::from_text(&"/A/B").unwrap(),
-        ))?;
-        index_writer.add_document(doc!(
-            facet_field => Facet::from_text(&"/A/C/A").unwrap(),
-        ))?;
-        index_writer.add_document(doc!(
-            facet_field => Facet::from_text(&"/D/C/A").unwrap(),
-        ))?;
-        index_writer.commit()?;
-        let reader = index.reader()?;
-        let searcher = reader.searcher();
-        assert_eq!(searcher.num_docs(), 4);
-
-        let count_facet = |facet_str: &str| {
-            let term = Term::from_facet(facet_field, &Facet::from_text(facet_str).unwrap());
-            searcher
-                .search(&TermQuery::new(term, IndexRecordOption::Basic), &Count)
-                .unwrap()
-        };
-
-        assert_eq!(count_facet("/"), 4);
-        assert_eq!(count_facet("/A"), 3);
-        assert_eq!(count_facet("/A/B"), 1);
-        assert_eq!(count_facet("/A/C"), 1);
-        assert_eq!(count_facet("/A/C/A"), 1);
-        assert_eq!(count_facet("/C/A"), 0);
-
-        let query_parser = QueryParser::for_index(&index, vec![]);
-        {
-            let query = query_parser.parse_query("facet:/A/B")?;
-            assert_eq!(1, searcher.search(&query, &Count).unwrap());
-        }
-        {
-            let query = query_parser.parse_query("facet:/A")?;
-            assert_eq!(3, searcher.search(&query, &Count)?);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_non_used_facet_collector() {
-        let mut facet_collector = FacetCollector::for_field("facet");
-        facet_collector.add_facet(Facet::from("/country"));
-        facet_collector.add_facet(Facet::from("/countryeurope"));
-    }
-
-    #[test]
-    fn test_facet_collector_topk() {
-        let mut schema_builder = Schema::builder();
-        let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
-        let schema = schema_builder.build();
-        let index = Index::create_in_ram(schema);
-
-        let uniform = Uniform::new_inclusive(1, 100_000);
-        let mut docs: Vec<Document> = vec![("a", 10), ("b", 100), ("c", 7), ("d", 12), ("e", 21)]
-            .into_iter()
-            .flat_map(|(c, count)| {
-                let facet = Facet::from(&format!("/facet/{}", c));
-                let doc = doc!(facet_field => facet);
-                iter::repeat(doc).take(count)
-            })
-            .map(|mut doc| {
-                doc.add_facet(
-                    facet_field,
-                    &format!("/facet/{}", thread_rng().sample(uniform)),
-                );
-                doc
-            })
-            .collect();
-        docs[..].shuffle(&mut thread_rng());
-
-        let mut index_writer = index.writer_for_tests().unwrap();
-        for doc in docs {
-            index_writer.add_document(doc).unwrap();
-        }
-        index_writer.commit().unwrap();
-        let searcher = index.reader().unwrap().searcher();
-
-        let mut facet_collector = FacetCollector::for_field("facet");
-        facet_collector.add_facet("/facet");
-        let counts: FacetCounts = searcher.search(&AllQuery, &facet_collector).unwrap();
-
-        {
-            let facets: Vec<(&Facet, u64)> = counts.top_k("/facet", 3);
-            assert_eq!(
-                facets,
-                vec![
-                    (&Facet::from("/facet/b"), 100),
-                    (&Facet::from("/facet/e"), 21),
-                    (&Facet::from("/facet/d"), 12),
-                ]
-            );
-        }
-    }
-
-    #[test]
-    fn test_facet_collector_topk_tie_break() -> crate::Result<()> {
-        let mut schema_builder = Schema::builder();
-        let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
-        let schema = schema_builder.build();
-        let index = Index::create_in_ram(schema);
-
-        let docs: Vec<Document> = vec![("b", 2), ("a", 2), ("c", 4)]
-            .into_iter()
-            .flat_map(|(c, count)| {
-                let facet = Facet::from(&format!("/facet/{}", c));
-                let doc = doc!(facet_field => facet);
-                iter::repeat(doc).take(count)
-            })
-            .collect();
-
-        let mut index_writer = index.writer_for_tests()?;
-        for doc in docs {
-            index_writer.add_document(doc)?;
-        }
-        index_writer.commit()?;
-
-        let searcher = index.reader()?.searcher();
-        let mut facet_collector = FacetCollector::for_field("facet");
-        facet_collector.add_facet("/facet");
-        let counts: FacetCounts = searcher.search(&AllQuery, &facet_collector)?;
-
-        let facets: Vec<(&Facet, u64)> = counts.top_k("/facet", 2);
-        assert_eq!(
-            facets,
-            vec![(&Facet::from("/facet/c"), 4), (&Facet::from("/facet/a"), 2)]
-        );
-        Ok(())
-    }
-}
-
-#[cfg(all(test, feature = "unstable"))]
-mod bench {
-
-    use rand::seq::SliceRandom;
-    use rand::thread_rng;
-    use test::Bencher;
-
-    use crate::collector::FacetCollector;
-    use crate::query::AllQuery;
-    use crate::schema::{Facet, Schema, INDEXED};
-    use crate::Index;
-
-    #[bench]
-    fn bench_facet_collector(b: &mut Bencher) {
-        let mut schema_builder = Schema::builder();
-        let facet_field = schema_builder.add_facet_field("facet", INDEXED);
-        let schema = schema_builder.build();
-        let index = Index::create_in_ram(schema);
-
-        let mut docs = vec![];
-        for val in 0..50 {
-            let facet = Facet::from(&format!("/facet_{val}"));
-            for _ in 0..val * val {
-                docs.push(doc!(facet_field=>facet.clone()));
-            }
-        }
-        // 40425 docs
-        docs[..].shuffle(&mut thread_rng());
-
-        let mut index_writer = index.writer_for_tests().unwrap();
-        for doc in docs {
-            index_writer.add_document(doc).unwrap();
-        }
-        index_writer.commit().unwrap();
-        let reader = index.reader().unwrap();
-        b.iter(|| {
-            let searcher = reader.searcher();
-            let facet_collector = FacetCollector::for_field("facet");
-            searcher.search(&AllQuery, &facet_collector).unwrap();
-        });
-    }
-}
+// #[cfg(test)]
+// mod tests {
+// use std::collections::BTreeSet;
+// use std::iter;
+//
+// use columnar::Dictionary;
+// use rand::distributions::Uniform;
+// use rand::prelude::SliceRandom;
+// use rand::{thread_rng, Rng};
+//
+// use super::{FacetCollector, FacetCounts};
+// use crate::collector::facet_collector::compress_mapping;
+// use crate::collector::Count;
+// use crate::core::Index;
+// use crate::query::{AllQuery, QueryParser, TermQuery};
+// use crate::schema::{Document, Facet, FacetOptions, IndexRecordOption, Schema};
+// use crate::Term;
+//
+// fn test_collapse_mapping_aux(
+// facet_terms: &[&str],
+// facet_params: &[&str],
+// expected_collapsed_mapping: &[(u64, usize)],
+// ) {
+// let mut facets: Vec<Facet> = facet_terms.iter().map(Facet::from).collect();
+// facets.sort();
+// let facet_terms: Vec<&str> = facets.iter().map(|facet| facet.encoded_str()).collect();
+// let dictionary = Dictionary::build_for_tests(&facet_terms);
+// let facet_params: BTreeSet<Facet> = facet_params.iter().map(Facet::from).collect();
+// let collapse_mapping = super::compute_collapse_mapping(&dictionary, &facet_params).unwrap();
+// assert_eq!(&collapse_mapping[..], expected_collapsed_mapping);
+// }
+//
+// #[test]
+// fn test_collapse_simple() {
+// test_collapse_mapping_aux(&["/facet/a", "/facet/b"], &["/facet"], &[(0, 1), (1, 1)]);
+// test_collapse_mapping_aux(
+// &["/facet/a", "/facet/a2", "/facet/b"],
+// &["/facet"],
+// &[(0, 1), (1, 1), (2, 1)],
+// );
+// test_collapse_mapping_aux(&["/facet/a", "/facet/a/2"], &["/facet"], &[(0, 1), (0, 1)]);
+// test_collapse_mapping_aux(
+// &["/facet/a", "/facet/a/2", "/facet/b"],
+// &["/facet"],
+// &[(0, 1), (0, 1), (2, 1)],
+// );
+// }
+//
+// fn test_compress_mapping_aux(
+// collapsed_mapping: &[(u64, usize)],
+// expected_compressed_collapsed_mapping: &[usize],
+// expected_unique_facet_ords: &[(u64, usize)],
+// ) {
+// let (compressed_collapsed_mapping, unique_facet_ords) = compress_mapping(collapsed_mapping);
+// assert_eq!(
+// compressed_collapsed_mapping,
+// expected_compressed_collapsed_mapping
+// );
+// assert_eq!(unique_facet_ords, expected_unique_facet_ords);
+// }
+//
+// #[test]
+// fn test_compress_mapping() {
+// test_compress_mapping_aux(&[], &[], &[]);
+// test_compress_mapping_aux(&[(1, 2)], &[0], &[(1, 2)]);
+// test_compress_mapping_aux(&[(1, 2), (1, 2)], &[0, 0], &[(1, 2)]);
+// test_compress_mapping_aux(
+// &[(1, 2), (5, 2), (5, 2), (6, 3), (8, 3)],
+// &[0, 1, 1, 2, 3],
+// &[(1, 2), (5, 2), (6, 3), (8, 3)],
+// );
+// }
+//
+// #[test]
+// fn test_facet_collector_simple() {
+// let mut schema_builder = Schema::builder();
+// let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
+// let schema = schema_builder.build();
+// let index = Index::create_in_ram(schema);
+// let mut index_writer = index.writer_for_tests().unwrap();
+// index_writer
+// .add_document(doc!(facet_field=>Facet::from("/facet/a")))
+// .unwrap();
+// index_writer
+// .add_document(doc!(facet_field=>Facet::from("/facet/b")))
+// .unwrap();
+// index_writer
+// .add_document(doc!(facet_field=>Facet::from("/facet/b")))
+// .unwrap();
+// index_writer
+// .add_document(doc!(facet_field=>Facet::from("/facet/c")))
+// .unwrap();
+// index_writer.commit().unwrap();
+// let searcher = index.reader().unwrap().searcher();
+// let mut facet_collector = FacetCollector::for_field("facet");
+// facet_collector.add_facet("/facet");
+// let counts: FacetCounts = searcher.search(&AllQuery, &facet_collector).unwrap();
+// let facets: Vec<(&Facet, u64)> = counts.top_k("/facet", 1);
+// assert_eq!(facets, vec![(&Facet::from("/facet/b"), 2)]);
+// }
+//
+// #[test]
+// fn test_facet_collector_drilldown() {
+// let mut schema_builder = Schema::builder();
+// let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
+// let schema = schema_builder.build();
+// let index = Index::create_in_ram(schema);
+//
+// let mut index_writer = index.writer_for_tests().unwrap();
+// let num_facets: usize = 3 * 4 * 5;
+// let facets: Vec<Facet> = (0..num_facets)
+// .map(|mut n| {
+// let top = n % 3;
+// n /= 3;
+// let mid = n % 4;
+// n /= 4;
+// let leaf = n % 5;
+// Facet::from(&format!("/top{}/mid{}/leaf{}", top, mid, leaf))
+// })
+// .collect();
+// for i in 0..num_facets * 10 {
+// let mut doc = Document::new();
+// doc.add_facet(facet_field, facets[i % num_facets].clone());
+// index_writer.add_document(doc).unwrap();
+// }
+// index_writer.commit().unwrap();
+// let reader = index.reader().unwrap();
+// let searcher = reader.searcher();
+// let mut facet_collector = FacetCollector::for_field("facet");
+// facet_collector.add_facet(Facet::from("/top1"));
+// let counts = searcher.search(&AllQuery, &facet_collector).unwrap();
+//
+// {
+// let facets: Vec<(String, u64)> = counts
+// .get("/top1")
+// .map(|(facet, count)| (facet.to_string(), count))
+// .collect();
+// assert_eq!(
+// facets,
+// [
+// ("/top1/mid0", 50),
+// ("/top1/mid1", 50),
+// ("/top1/mid2", 50),
+// ("/top1/mid3", 50),
+// ]
+// .iter()
+// .map(|&(facet_str, count)| (String::from(facet_str), count))
+// .collect::<Vec<_>>()
+// );
+// }
+// }
+//
+// #[test]
+// #[should_panic(
+// expected = "Tried to add a facet which is a descendant of an already added facet."
+// )]
+// fn test_misused_facet_collector() {
+// let mut facet_collector = FacetCollector::for_field("facet");
+// facet_collector.add_facet(Facet::from("/country"));
+// facet_collector.add_facet(Facet::from("/country/europe"));
+// }
+//
+// #[test]
+// fn test_doc_unsorted_multifacet() -> crate::Result<()> {
+// let mut schema_builder = Schema::builder();
+// let facet_field = schema_builder.add_facet_field("facets", FacetOptions::default());
+// let schema = schema_builder.build();
+// let index = Index::create_in_ram(schema);
+// let mut index_writer = index.writer_for_tests()?;
+// index_writer.add_document(doc!(
+// facet_field => Facet::from_text(&"/subjects/A/a").unwrap(),
+// facet_field => Facet::from_text(&"/subjects/B/a").unwrap(),
+// facet_field => Facet::from_text(&"/subjects/A/b").unwrap(),
+// facet_field => Facet::from_text(&"/subjects/B/b").unwrap(),
+// ))?;
+// index_writer.commit()?;
+// let reader = index.reader()?;
+// let searcher = reader.searcher();
+// assert_eq!(searcher.num_docs(), 1);
+// let mut facet_collector = FacetCollector::for_field("facets");
+// facet_collector.add_facet("/subjects");
+// let counts = searcher.search(&AllQuery, &facet_collector)?;
+// let facets: Vec<(&Facet, u64)> = counts.get("/subjects").collect();
+// assert_eq!(facets[0].1, 1);
+// Ok(())
+// }
+//
+// #[test]
+// fn test_doc_search_by_facet() -> crate::Result<()> {
+// let mut schema_builder = Schema::builder();
+// let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
+// let schema = schema_builder.build();
+// let index = Index::create_in_ram(schema);
+// let mut index_writer = index.writer_for_tests()?;
+// index_writer.add_document(doc!(
+// facet_field => Facet::from_text(&"/A/A").unwrap(),
+// ))?;
+// index_writer.add_document(doc!(
+// facet_field => Facet::from_text(&"/A/B").unwrap(),
+// ))?;
+// index_writer.add_document(doc!(
+// facet_field => Facet::from_text(&"/A/C/A").unwrap(),
+// ))?;
+// index_writer.add_document(doc!(
+// facet_field => Facet::from_text(&"/D/C/A").unwrap(),
+// ))?;
+// index_writer.commit()?;
+// let reader = index.reader()?;
+// let searcher = reader.searcher();
+// assert_eq!(searcher.num_docs(), 4);
+//
+// let count_facet = |facet_str: &str| {
+// let term = Term::from_facet(facet_field, &Facet::from_text(facet_str).unwrap());
+// searcher
+// .search(&TermQuery::new(term, IndexRecordOption::Basic), &Count)
+// .unwrap()
+// };
+//
+// assert_eq!(count_facet("/"), 4);
+// assert_eq!(count_facet("/A"), 3);
+// assert_eq!(count_facet("/A/B"), 1);
+// assert_eq!(count_facet("/A/C"), 1);
+// assert_eq!(count_facet("/A/C/A"), 1);
+// assert_eq!(count_facet("/C/A"), 0);
+//
+// let query_parser = QueryParser::for_index(&index, vec![]);
+// {
+// let query = query_parser.parse_query("facet:/A/B")?;
+// assert_eq!(1, searcher.search(&query, &Count).unwrap());
+// }
+// {
+// let query = query_parser.parse_query("facet:/A")?;
+// assert_eq!(3, searcher.search(&query, &Count)?);
+// }
+// Ok(())
+// }
+//
+// #[test]
+// fn test_non_used_facet_collector() {
+// let mut facet_collector = FacetCollector::for_field("facet");
+// facet_collector.add_facet(Facet::from("/country"));
+// facet_collector.add_facet(Facet::from("/countryeurope"));
+// }
+//
+// #[test]
+// fn test_facet_collector_topk() {
+// let mut schema_builder = Schema::builder();
+// let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
+// let schema = schema_builder.build();
+// let index = Index::create_in_ram(schema);
+//
+// let uniform = Uniform::new_inclusive(1, 100_000);
+// let mut docs: Vec<Document> = vec![("a", 10), ("b", 100), ("c", 7), ("d", 12), ("e", 21)]
+// .into_iter()
+// .flat_map(|(c, count)| {
+// let facet = Facet::from(&format!("/facet/{}", c));
+// let doc = doc!(facet_field => facet);
+// iter::repeat(doc).take(count)
+// })
+// .map(|mut doc| {
+// doc.add_facet(
+// facet_field,
+// &format!("/facet/{}", thread_rng().sample(uniform)),
+// );
+// doc
+// })
+// .collect();
+// docs[..].shuffle(&mut thread_rng());
+//
+// let mut index_writer = index.writer_for_tests().unwrap();
+// for doc in docs {
+// index_writer.add_document(doc).unwrap();
+// }
+// index_writer.commit().unwrap();
+// let searcher = index.reader().unwrap().searcher();
+//
+// let mut facet_collector = FacetCollector::for_field("facet");
+// facet_collector.add_facet("/facet");
+// let counts: FacetCounts = searcher.search(&AllQuery, &facet_collector).unwrap();
+//
+// {
+// let facets: Vec<(&Facet, u64)> = counts.top_k("/facet", 3);
+// assert_eq!(
+// facets,
+// vec![
+// (&Facet::from("/facet/b"), 100),
+// (&Facet::from("/facet/e"), 21),
+// (&Facet::from("/facet/d"), 12),
+// ]
+// );
+// }
+// }
+//
+// #[test]
+// fn test_facet_collector_topk_tie_break() -> crate::Result<()> {
+// let mut schema_builder = Schema::builder();
+// let facet_field = schema_builder.add_facet_field("facet", FacetOptions::default());
+// let schema = schema_builder.build();
+// let index = Index::create_in_ram(schema);
+//
+// let docs: Vec<Document> = vec![("b", 2), ("a", 2), ("c", 4)]
+// .into_iter()
+// .flat_map(|(c, count)| {
+// let facet = Facet::from(&format!("/facet/{}", c));
+// let doc = doc!(facet_field => facet);
+// iter::repeat(doc).take(count)
+// })
+// .collect();
+//
+// let mut index_writer = index.writer_for_tests()?;
+// for doc in docs {
+// index_writer.add_document(doc)?;
+// }
+// index_writer.commit()?;
+//
+// let searcher = index.reader()?.searcher();
+// let mut facet_collector = FacetCollector::for_field("facet");
+// facet_collector.add_facet("/facet");
+// let counts: FacetCounts = searcher.search(&AllQuery, &facet_collector)?;
+//
+// let facets: Vec<(&Facet, u64)> = counts.top_k("/facet", 2);
+// assert_eq!(
+// facets,
+// vec![(&Facet::from("/facet/c"), 4), (&Facet::from("/facet/a"), 2)]
+// );
+// Ok(())
+// }
+// }
+//
+// #[cfg(all(test, feature = "unstable"))]
+// mod bench {
+//
+// use rand::seq::SliceRandom;
+// use rand::thread_rng;
+// use test::Bencher;
+//
+// use crate::collector::FacetCollector;
+// use crate::query::AllQuery;
+// use crate::schema::{Facet, Schema, INDEXED};
+// use crate::Index;
+//
+// #[bench]
+// fn bench_facet_collector(b: &mut Bencher) {
+// let mut schema_builder = Schema::builder();
+// let facet_field = schema_builder.add_facet_field("facet", INDEXED);
+// let schema = schema_builder.build();
+// let index = Index::create_in_ram(schema);
+//
+// let mut docs = vec![];
+// for val in 0..50 {
+// let facet = Facet::from(&format!("/facet_{val}"));
+// for _ in 0..val * val {
+// docs.push(doc!(facet_field=>facet.clone()));
+// }
+// }
+// 40425 docs
+// docs[..].shuffle(&mut thread_rng());
+//
+// let mut index_writer = index.writer_for_tests().unwrap();
+// for doc in docs {
+// index_writer.add_document(doc).unwrap();
+// }
+// index_writer.commit().unwrap();
+// let reader = index.reader().unwrap();
+// b.iter(|| {
+// let searcher = reader.searcher();
+// let facet_collector = FacetCollector::for_field("facet");
+// searcher.search(&AllQuery, &facet_collector).unwrap();
+// });
+// }
+// }

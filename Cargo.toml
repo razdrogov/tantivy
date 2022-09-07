@@ -14,6 +14,7 @@ edition = "2021"
 rust-version = "1.62"
 
 [dependencies]
+futures = "0.3.25"
 oneshot = "0.1.5"
 base64 = "0.21.0"
 byteorder = "1.4.3"
@@ -21,7 +22,7 @@ crc32fast = "1.3.2"
 once_cell = "1.10.0"
 regex = { version = "1.5.5", default-features = false, features = ["std", "unicode"] }
 aho-corasick = "1.0"
-tantivy-fst = "0.4.0"
+izihawa-fst = "0.4.0"
 memmap2 = { version = "0.6.0", optional = true }
 lz4_flex = { version = "0.10", default-features = false, features = ["checked-decode"], optional = true }
 brotli = { version = "3.3.4", optional = true }
@@ -32,6 +33,7 @@ log = "0.4.16"
 serde = { version = "1.0.136", features = ["derive"] }
 serde_json = "1.0.79"
 num_cpus = "1.13.1"
+tokio = { version = "1.24", default_features = false, features = ["fs", "io-util"], optional = true }
 fs4 = { version = "0.6.3", optional = true }
 levenshtein_automata = "0.2.1"
 uuid = { version = "1.0.0", features = ["v4", "serde"] }
@@ -52,9 +54,8 @@ lru = "0.10.0"
 fastdivide = "0.4.0"
 itertools = "0.10.3"
 measure_time = "0.8.2"
-async-trait = "0.1.53"
+async-trait = "0.1"
 arc-swap = "1.5.0"
-
 columnar = { version="0.1", path="./columnar", package ="tantivy-columnar" }
 sstable = { version="0.1", path="./sstable", package ="tantivy-sstable", optional = true }
 stacker = { version="0.1", path="./stacker", package ="tantivy-stacker" }
@@ -103,7 +104,7 @@ overflow-checks = true
 
 [features]
 default = ["mmap", "stopwords", "lz4-compression"]
-mmap = ["fs4", "tempfile", "memmap2"]
+mmap = ["fs4", "tempfile", "memmap2", "tokio"]
 stopwords = []
 
 brotli-compression = ["brotli"]
@@ -114,7 +115,8 @@ zstd-compression = ["zstd"]
 failpoints = ["fail/failpoints"]
 unstable = [] # useful for benches.
 
-quickwit = ["sstable", "futures-util"]
+quickwit = ["sstable", "futures-util", "common/quickwit"]
+wasm = ["zstd/thin", "zstd/wasm"]
 
 [workspace]
 members = ["query-grammar", "bitpacker", "common", "ownedbytes", "stacker", "sstable", "tokenizer-api", "columnar"]

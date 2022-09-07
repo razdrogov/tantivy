@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use common::file_slice::FileSlice;
 use common::{BinarySerializable, OwnedBytes};
-use tantivy_fst::automaton::AlwaysMatch;
-use tantivy_fst::Automaton;
+use izihawa_fst::automaton::AlwaysMatch;
+use izihawa_fst::Automaton;
 
 use crate::streamer::{Streamer, StreamerBuilder};
 use crate::{BlockAddr, DeltaReader, Reader, SSTable, SSTableIndex, TermOrdinal, VoidSSTable};
@@ -37,20 +37,6 @@ pub struct Dictionary<TSSTable: SSTable = VoidSSTable> {
     pub sstable_index: SSTableIndex,
     num_terms: u64,
     phantom_data: PhantomData<TSSTable>,
-}
-
-impl Dictionary<VoidSSTable> {
-    pub fn build_for_tests(terms: &[&str]) -> Dictionary {
-        let mut terms = terms.to_vec();
-        terms.sort();
-        let mut buffer = Vec::new();
-        let mut dictionary_writer = Self::builder(&mut buffer).unwrap();
-        for term in terms {
-            dictionary_writer.insert(term, &()).unwrap();
-        }
-        dictionary_writer.finish().unwrap();
-        Dictionary::from_bytes(OwnedBytes::new(buffer)).unwrap()
-    }
 }
 
 impl<TSSTable: SSTable> Dictionary<TSSTable> {
@@ -194,8 +180,37 @@ impl<TSSTable: SSTable> Dictionary<TSSTable> {
             ));
         }
 
-        let (sstable_slice, index_slice) = main_slice.split(index_offset as usize);
+        let (sstable_slice, index_slice) = main_slice.split(index_offset);
         let sstable_index_bytes = index_slice.read_bytes()?;
+        let sstable_index = SSTableIndex::load(sstable_index_bytes)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "SSTable corruption"))?;
+        Ok(Dictionary {
+            sstable_slice,
+            sstable_index,
+            num_terms,
+            phantom_data: PhantomData,
+        })
+    }
+
+    pub async fn open_async(term_dictionary_file: FileSlice) -> io::Result<Self> {
+        let (main_slice, footer_len_slice) = term_dictionary_file.split_from_end(20);
+        let mut footer_len_bytes: OwnedBytes = footer_len_slice.read_bytes_async().await?;
+
+        let index_offset = u64::deserialize(&mut footer_len_bytes)?;
+        let num_terms = u64::deserialize(&mut footer_len_bytes)?;
+        let version = u32::deserialize(&mut footer_len_bytes)?;
+        if version != crate::SSTABLE_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Unsuported sstable version, expected {version}, found {}",
+                    crate::SSTABLE_VERSION,
+                ),
+            ));
+        }
+
+        let (sstable_slice, index_slice) = main_slice.split(index_offset);
+        let sstable_index_bytes = index_slice.read_bytes_async().await?;
         let sstable_index = SSTableIndex::load(sstable_index_bytes)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "SSTable corruption"))?;
         Ok(Dictionary {
@@ -377,12 +392,13 @@ impl<TSSTable: SSTable> Dictionary<TSSTable> {
 
     /// Returns a search builder, to stream all of the terms
     /// within the Automaton
-    pub fn search<'a, A: Automaton + 'a>(
+    pub fn search<'a, A: Automaton + 'a + Send>(
         &'a self,
         automaton: A,
     ) -> StreamerBuilder<'a, TSSTable, A>
     where
         A::State: Clone,
+        <A as Automaton>::State: Send,
     {
         StreamerBuilder::<TSSTable, A>::new(self, automaton)
     }
@@ -407,19 +423,19 @@ mod tests {
     #[derive(Debug)]
     struct PermissionedHandle {
         bytes: OwnedBytes,
-        allowed_range: Mutex<Range<usize>>,
+        allowed_range: Mutex<Range<u64>>,
     }
 
     impl PermissionedHandle {
         fn new(bytes: Vec<u8>) -> Self {
             let bytes = OwnedBytes::new(bytes);
             PermissionedHandle {
-                allowed_range: Mutex::new(0..bytes.len()),
+                allowed_range: Mutex::new(0..bytes.len() as u64),
                 bytes,
             }
         }
 
-        fn restrict(&self, range: Range<usize>) {
+        fn restrict(&self, range: Range<u64>) {
             *self.allowed_range.lock().unwrap() = range;
         }
     }
@@ -431,7 +447,7 @@ mod tests {
     }
 
     impl common::file_slice::FileHandle for PermissionedHandle {
-        fn read_bytes(&self, range: Range<usize>) -> std::io::Result<OwnedBytes> {
+        fn read_bytes(&self, range: Range<u64>) -> std::io::Result<OwnedBytes> {
             let allowed_range = self.allowed_range.lock().unwrap();
             if !allowed_range.contains(&range.start) || !allowed_range.contains(&(range.end - 1)) {
                 return Err(std::io::Error::new(
@@ -440,7 +456,7 @@ mod tests {
                 ));
             }
 
-            Ok(self.bytes.slice(range))
+            Ok(self.bytes.slice(range.start as usize..range.end as usize))
         }
     }
 
@@ -524,7 +540,7 @@ mod tests {
         assert!(dic.get(b"~~~").unwrap().is_none());
         assert!(dic.term_ord(b"~~~").unwrap().is_none());
 
-        slice.restrict(0..slice.bytes.len());
+        slice.restrict(0..slice.bytes.len() as u64);
         // between 1000F and 10010, test case where matched prefix > prefix kept
         assert!(dic.term_ord(b"1000G").unwrap().is_none());
         // shorter than 10000, tests prefix case
@@ -576,7 +592,7 @@ mod tests {
         }
         // there might be more successful elements after, though how many is undefined
 
-        slice.restrict(0..slice.bytes.len());
+        slice.restrict(0..slice.bytes.len() as u64);
 
         let mut stream = dic.stream().unwrap();
         for i in 0..0x3ffff {

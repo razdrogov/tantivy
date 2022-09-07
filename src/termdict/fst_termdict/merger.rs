@@ -1,6 +1,6 @@
-use tantivy_fst::map::{OpBuilder, Union};
-use tantivy_fst::raw::IndexedValue;
-use tantivy_fst::Streamer;
+use izihawa_fst::map::{OpBuilder, Union};
+use izihawa_fst::raw::IndexedValue;
+use izihawa_fst::Streamer;
 
 use super::termdict::TermDictionary;
 use crate::postings::TermInfo;

@@ -1,6 +1,7 @@
+use async_trait::async_trait;
+use izihawa_fst::Automaton;
 use levenshtein_automata::{Distance, LevenshteinAutomatonBuilder, DFA};
 use once_cell::sync::OnceCell;
-use tantivy_fst::Automaton;
 
 use crate::query::{AutomatonWeight, EnableScoring, Query, Weight};
 use crate::schema::Term;
@@ -147,9 +148,17 @@ impl FuzzyTermQuery {
     }
 }
 
+#[async_trait]
 impl Query for FuzzyTermQuery {
     fn weight(&self, _enable_scoring: EnableScoring<'_>) -> crate::Result<Box<dyn Weight>> {
         Ok(Box::new(self.specialized_weight()?))
+    }
+    #[cfg(feature = "quickwit")]
+    async fn weight_async(
+        &self,
+        enable_scoring: EnableScoring<'_>,
+    ) -> crate::Result<Box<dyn Weight>> {
+        self.weight(enable_scoring)
     }
 }
 

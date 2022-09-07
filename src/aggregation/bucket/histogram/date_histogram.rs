@@ -244,6 +244,8 @@ fn parse_into_milliseconds(input: &str) -> Result<i64, AggregationError> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -311,7 +313,7 @@ mod tests {
         let index = Index::create_in_ram(schema.clone());
         {
             let mut index_writer = index.writer_with_num_threads(1, 30_000_000)?;
-            index_writer.set_merge_policy(Box::new(NoMergePolicy));
+            index_writer.set_merge_policy(Arc::new(NoMergePolicy));
             for values in segment_and_docs {
                 for doc_str in values {
                     let doc = schema.parse_document(doc_str)?;

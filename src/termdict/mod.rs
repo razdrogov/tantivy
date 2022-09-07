@@ -39,7 +39,7 @@ use std::io;
 
 use common::file_slice::FileSlice;
 use common::BinarySerializable;
-use tantivy_fst::Automaton;
+use izihawa_fst::Automaton;
 
 use self::termdict::{
     TermDictionary as InnerTermDict, TermDictionaryBuilder as InnerTermDictBuilder,
@@ -83,6 +83,27 @@ impl TermDictionary {
         }
 
         InnerTermDict::open(main_slice).map(TermDictionary)
+    }
+
+    #[cfg(feature = "quickwit")]
+    pub async fn open_async(file: FileSlice) -> io::Result<Self> {
+        let (main_slice, dict_type) = file.split_from_end(4);
+        let mut dict_type = dict_type.read_bytes_async().await?;
+        let dict_type = u32::deserialize(&mut dict_type)?;
+
+        if dict_type != CURRENT_TYPE as u32 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Unsuported dictionary type, expected {}, found {dict_type}",
+                    CURRENT_TYPE as u32,
+                ),
+            ));
+        }
+
+        InnerTermDict::open_async(main_slice)
+            .await
+            .map(TermDictionary)
     }
 
     /// Creates an empty term dictionary which contains no terms.
@@ -139,8 +160,14 @@ impl TermDictionary {
 
     /// Returns a search builder, to stream all of the terms
     /// within the Automaton
-    pub fn search<'a, A: Automaton + 'a>(&'a self, automaton: A) -> TermStreamerBuilder<'a, A>
-    where A::State: Clone {
+    pub fn search<'a, A: Automaton + Send + 'a>(
+        &'a self,
+        automaton: A,
+    ) -> TermStreamerBuilder<'a, A>
+    where
+        A::State: Clone,
+        <A as Automaton>::State: Send,
+    {
         self.0.search(automaton)
     }
 

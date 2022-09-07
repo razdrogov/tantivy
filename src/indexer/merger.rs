@@ -743,6 +743,7 @@ impl IndexMerger {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
 
     use columnar::Column;
     use schema::FAST;
@@ -1610,7 +1611,7 @@ mod tests {
         // Make sure we'll attempt to merge every created segment
         let mut policy = crate::indexer::LogMergePolicy::default();
         policy.set_min_num_segments(2);
-        writer.set_merge_policy(Box::new(policy));
+        writer.set_merge_policy(Arc::new(policy));
 
         for i in 0..100 {
             let mut doc = Document::new();

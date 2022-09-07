@@ -199,12 +199,12 @@ where
         self.doc
     }
 
-    fn size_hint(&self) -> u32 {
+    fn size_hint(&self) -> u64 {
         self.docsets
             .iter()
             .map(|docset| docset.size_hint())
             .max()
-            .unwrap_or(0u32)
+            .unwrap_or(0u64)
     }
 
     fn count_including_deleted(&mut self) -> u32 {
