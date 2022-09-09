@@ -21,7 +21,7 @@ use crate::indexer::stamper::Stamper;
 use crate::indexer::{MergePolicy, SegmentEntry, SegmentWriter};
 use crate::query::{Query, TermQuery};
 use crate::schema::{Document, IndexRecordOption, Term};
-use crate::{FutureResult, IndexReader, Opstamp};
+use crate::{FutureResult, IndexReader, Opstamp, SegmentAttributes};
 
 // Size of the margin for the `memory_arena`. A segment is closed when the remaining memory
 // in the `memory_arena` goes below MARGIN_IN_BYTES.
@@ -513,7 +513,23 @@ impl IndexWriter {
     ///
     /// `segment_ids` is required to be non-empty.
     pub fn merge(&mut self, segment_ids: &[SegmentId]) -> FutureResult<Option<SegmentMeta>> {
-        let merge_operation = self.segment_updater.make_merge_operation(segment_ids);
+        let merge_operation = self
+            .segment_updater
+            .make_merge_operation(segment_ids, false);
+        let segment_updater = self.segment_updater.clone();
+        segment_updater.start_merge(merge_operation)
+    }
+
+    /// Merges a given list of segments and override attributes for result segment from settings
+    ///
+    /// If all segments are empty no new segment will be created.
+    ///
+    /// `segment_ids` is required to be non-empty.
+    pub fn merge_with_override(
+        &mut self,
+        segment_ids: &[SegmentId],
+    ) -> FutureResult<Option<SegmentMeta>> {
+        let merge_operation = self.segment_updater.make_merge_operation(segment_ids, true);
         let segment_updater = self.segment_updater.clone();
         segment_updater.start_merge(merge_operation)
     }
