@@ -1,13 +1,13 @@
 [package]
-name = "tantivy"
-version = "0.19.0"
-authors = ["Paul Masurel <paul.masurel@gmail.com>"]
+name = "summavy"
+version = "0.27.0"
+authors = ["Paul Masurel <paul.masurel@gmail.com>", "Pasha Podolsky <ppodolsky@me.com>"]
 license = "MIT"
 categories = ["database-implementations", "data-structures"]
 description = """Search engine library"""
 documentation = "https://docs.rs/tantivy/"
-homepage = "https://github.com/quickwit-oss/tantivy"
-repository = "https://github.com/quickwit-oss/tantivy"
+homepage = "https://github.com/izihawa/tantivy"
+repository = "https://github.com/izihawa/tantivy"
 readme = "README.md"
 keywords = ["search", "information", "retrieval"]
 edition = "2021"
@@ -55,14 +55,14 @@ itertools = "0.10.3"
 measure_time = "0.8.2"
 async-trait = "0.1.53"
 arc-swap = "1.5.0"
-columnar = { version="0.1", path="./columnar", package ="tantivy-columnar" }
-sstable = { version="0.1", path="./sstable", package ="tantivy-sstable", optional = true }
-stacker = { version="0.1", path="./stacker", package ="tantivy-stacker" }
+columnar = { version="0.1", path="./columnar", package ="summavy-columnar" }
+sstable = { version="0.1", path="./sstable", package ="summavy-sstable", optional = true }
+stacker = { version="0.1", path="./stacker", package ="summavy-stacker" }
 tantivy-query-grammar = { version= "0.19.0", path="./query-grammar" }
-tantivy-bitpacker = 		{ version= "0.3", path="./bitpacker" }
-common = 								{ version= "0.5", path = "./common/", package = "tantivy-common" }
-fastfield_codecs = 			{ version= "0.3", path="./fastfield_codecs", default-features = false }
-tokenizer-api = { version="0.1", path="./tokenizer-api", package="tantivy-tokenizer-api" }
+tantivy-bitpacker = 		{ version= "0.3", path="./bitpacker", package = "summavy-bitpacker" }
+common = 								{ version= "0.5", path = "./common/", package = "summavy-common" }
+fastfield_codecs = 			{ version= "0.3", path="./fastfield_codecs", default-features = false, package = "summavy_fastfield_codecs" }
+tokenizer-api = { version="0.1", path="./tokenizer-api", package="summavy-tokenizer-api" }
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3.9"

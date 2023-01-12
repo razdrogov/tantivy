@@ -1,8 +1,8 @@
 [package]
-name = "tantivy-bitpacker"
+name = "summavy-bitpacker"
 version = "0.3.0"
 edition = "2021"
-authors = ["Paul Masurel <paul.masurel@gmail.com>"]
+authors = ["Paul Masurel <paul.masurel@gmail.com>", "Pasha Podolsky<ppodolsky@me.com>"]
 license = "MIT"
 categories = []
 description = """Tantivy-sub crate: bitpacking"""

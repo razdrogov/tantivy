@@ -1,11 +1,12 @@
 [package]
-name = "tantivy-sstable"
+name = "summavy-sstable"
+description = "sstable implementation"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
 [dependencies]
-common = {path="../common", package="tantivy-common"}
+common = {path="../common", package="summavy-common", version="0.5"}
 ciborium = "0.2"
 serde = "1"
 tantivy-fst = "0.4"

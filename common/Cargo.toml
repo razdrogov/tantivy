@@ -1,7 +1,7 @@
 [package]
-name = "tantivy-common"
+name = "summavy-common"
 version = "0.5.0"
-authors = ["Paul Masurel <paul@quickwit.io>", "Pascal Seitz <pascal@quickwit.io>"]
+authors = ["Paul Masurel <paul@quickwit.io>", "Pascal Seitz <pascal@quickwit.io>", "Pasha Podolsky <ppodolsky@me.com>"]
 license = "MIT"
 edition = "2021"
 description = "common traits and utility functions used by multiple tantivy subcrates"
@@ -14,7 +14,7 @@ repository = "https://github.com/quickwit-oss/tantivy"
 
 [dependencies]
 byteorder = "1.4.3"
-ownedbytes = { version= "0.5", path="../ownedbytes" }
+ownedbytes = { version= "0.5", path="../ownedbytes", package = "summavy-ownedbytes" }
 async-trait = "0.1"
 
 [dev-dependencies]
