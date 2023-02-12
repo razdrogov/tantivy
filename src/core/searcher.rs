@@ -214,38 +214,6 @@ impl Searcher {
         collector.merge_fruits(fruits)
     }
 
-    /// Runs a query on the segment readers wrapped by the searcher asynchronously.
-    ///
-    /// See [`Self::search()`] for details
-    #[cfg(feature = "quickwit")]
-    pub async fn search_async<C: Collector>(
-        &self,
-        query: &dyn Query,
-        collector: &C,
-    ) -> crate::Result<C::Fruit> {
-        let enabled_scoring = if collector.requires_scoring() {
-            EnableScoring::enabled_from_searcher(self)
-        } else {
-            EnableScoring::disabled_from_searcher(self)
-        };
-        let segment_readers = self.segment_readers();
-        let weight = query.weight_async(enabled_scoring).await?;
-        let fruits = futures::future::join_all(segment_readers.iter().enumerate().map(
-            |(segment_ord, segment_reader)| {
-                let weight_ref = weight.as_ref();
-                async move {
-                    collector
-                        .collect_segment_async(weight_ref, segment_ord as u32, segment_reader)
-                        .await
-                }
-            },
-        ))
-        .await
-        .into_iter()
-        .collect::<crate::Result<Vec<_>>>()?;
-        collector.merge_fruits(fruits)
-    }
-
     /// Summarize total space usage of this searcher.
     pub fn space_usage(&self) -> io::Result<SearcherSpaceUsage> {
         let mut space_usage = SearcherSpaceUsage::new();
