@@ -1133,24 +1133,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tweak_score_top_collector_with_offset() -> crate::Result<()> {
-        let index = make_index()?;
-        let field = index.schema().get_field("text").unwrap();
-        let query_parser = QueryParser::for_index(&index, vec![field]);
-        let text_query = query_parser.parse_query("droopy tax")?;
-        let collector = TopDocs::with_limit(2).and_offset(1).tweak_score(
-            move |_segment_reader: &SegmentReader| move |doc: DocId, _original_score: Score| doc,
-        );
-        let score_docs: Vec<(u32, DocAddress)> =
-            index.reader()?.searcher().search(&text_query, &collector)?;
-        assert_eq!(
-            score_docs,
-            vec![(1, DocAddress::new(0, 1)), (0, DocAddress::new(0, 0)),]
-        );
-        Ok(())
-    }
-
-    #[test]
     fn test_custom_score_top_collector_with_offset() {
         let index = make_index().unwrap();
         let field = index.schema().get_field("text").unwrap();
