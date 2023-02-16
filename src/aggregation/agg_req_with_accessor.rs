@@ -1,7 +1,7 @@
 //! This will enhance the request tree with access to the fastfield and metadata.
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
 
 use columnar::{Column, StrColumn};
 

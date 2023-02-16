@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use async_trait::async_trait;
+
 use crate::core::SegmentReader;
 use crate::postings::FreqReadingOption;
 use crate::query::explanation::does_not_match;
@@ -224,7 +226,7 @@ impl<TScoreCombiner: ScoreCombiner> BooleanWeight<TScoreCombiner> {
             .weights
             .iter()
             .map(|&(ref occur, ref subweight)| async move {
-                Ok((occur, subweight.scorer_async(reader, boost).await?))
+                Ok::<_, crate::TantivyError>((occur, subweight.scorer_async(reader, boost).await?))
             });
         for sub_scorer in futures::future::join_all(sub_scorers).await.into_iter() {
             let (occur, sub_scorer) = sub_scorer?;
@@ -237,6 +239,7 @@ impl<TScoreCombiner: ScoreCombiner> BooleanWeight<TScoreCombiner> {
     }
 }
 
+#[async_trait]
 impl<TScoreCombiner: ScoreCombiner + Sync> Weight for BooleanWeight<TScoreCombiner> {
     fn scorer(&self, reader: &SegmentReader, boost: Score) -> crate::Result<Box<dyn Scorer>> {
         if self.weights.is_empty() {
@@ -284,7 +287,7 @@ impl<TScoreCombiner: ScoreCombiner + Sync> Weight for BooleanWeight<TScoreCombin
     fn for_each(
         &self,
         reader: &SegmentReader,
-        callback: &mut (dyn FnMut(DocId, Score) + Send),
+        callback: &mut dyn FnMut(DocId, Score),
     ) -> crate::Result<()> {
         let scorer = self.complex_scorer(reader, 1.0, &self.score_combiner_fn)?;
         match scorer {
@@ -344,11 +347,8 @@ impl<TScoreCombiner: ScoreCombiner + Sync> Weight for BooleanWeight<TScoreCombin
         }
         Ok(())
     }
-}
 
-#[cfg(feature = "quickwit")]
-#[async_trait::async_trait]
-impl<TScoreCombiner: ScoreCombiner> BooleanWeight<TScoreCombiner> {
+    #[cfg(feature = "quickwit")]
     async fn scorer_async(
         &self,
         reader: &SegmentReader,
@@ -378,6 +378,7 @@ impl<TScoreCombiner: ScoreCombiner> BooleanWeight<TScoreCombiner> {
         }
     }
 
+    #[cfg(feature = "quickwit")]
     async fn for_each_async(
         &self,
         reader: &SegmentReader,
@@ -398,6 +399,7 @@ impl<TScoreCombiner: ScoreCombiner> BooleanWeight<TScoreCombiner> {
         Ok(())
     }
 
+    #[cfg(feature = "quickwit")]
     async fn for_each_no_score_async(
         &self,
         reader: &SegmentReader,
@@ -418,6 +420,7 @@ impl<TScoreCombiner: ScoreCombiner> BooleanWeight<TScoreCombiner> {
         Ok(())
     }
 
+    #[cfg(feature = "quickwit")]
     async fn for_each_pruning_async(
         &self,
         threshold: Score,

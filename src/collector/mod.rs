@@ -144,7 +144,7 @@ pub trait Collector: Sync + Send {
     type Fruit: Fruit;
 
     /// Type of the `SegmentCollector` associated with this collector.
-    type Child: SegmentCollector;
+    type Child: SegmentCollector + Send;
 
     /// `set_segment` is called before beginning to enumerate
     /// on this segment.

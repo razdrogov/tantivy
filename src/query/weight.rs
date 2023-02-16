@@ -9,7 +9,7 @@ use crate::{DocId, DocSet, Score, TERMINATED};
 /// `DocSet`.
 pub(crate) fn for_each_scorer<TScorer: Scorer + ?Sized>(
     scorer: &mut TScorer,
-    callback: &mut (dyn FnMut(DocId, Score) + Send),
+    callback: &mut dyn FnMut(DocId, Score),
 ) {
     let mut doc = scorer.doc();
     while doc != TERMINATED {
@@ -102,7 +102,7 @@ pub trait Weight: Send + Sync + 'static {
     fn for_each(
         &self,
         reader: &SegmentReader,
-        callback: &mut (dyn FnMut(DocId, Score) + Send),
+        callback: &mut dyn FnMut(DocId, Score),
     ) -> crate::Result<()> {
         let mut scorer = self.scorer(reader, 1.0)?;
         for_each_scorer(scorer.as_mut(), callback);

@@ -13,7 +13,7 @@ use crate::schema::{Field, IndexRecordOption, Schema, Type};
 use crate::space_usage::SegmentSpaceUsage;
 use crate::store::StoreReader;
 use crate::termdict::TermDictionary;
-use crate::{DocId, Opstamp};
+use crate::{DocId, Opstamp, TantivyError};
 
 /// Entry point to access all of the datastructures of the `Segment`
 ///
@@ -420,47 +420,60 @@ impl SegmentReader {
         segment: &Segment,
         custom_bitset: Option<AliveBitSet>,
     ) -> crate::Result<SegmentReader> {
-        let termdict_file = segment.open_read_async(SegmentComponent::Terms).await?;
-        let termdict_composite = CompositeFile::open_async(&termdict_file).await?;
-
-        let store_file = segment.open_read_async(SegmentComponent::Store).await?;
+        let (
+            termdict_composite,
+            store_file,
+            postings_composite,
+            positions_composite,
+            fast_fields_readers,
+            fieldnorm_readers,
+            original_bitset,
+        ) = futures::join!(
+            async move {
+                let termdict_file = segment.open_read_async(SegmentComponent::Terms).await?;
+                Ok::<_, TantivyError>(CompositeFile::open_async(&termdict_file).await?)
+            },
+            segment.open_read_async(SegmentComponent::Store),
+            async move {
+                let postings_file = segment.open_read_async(SegmentComponent::Postings).await?;
+                Ok::<_, TantivyError>(CompositeFile::open_async(&postings_file).await?)
+            },
+            async move {
+                if let Ok(positions_file) =
+                    segment.open_read_async(SegmentComponent::Positions).await
+                {
+                    Ok(CompositeFile::open_async(&positions_file).await?)
+                } else {
+                    Ok::<_, TantivyError>(CompositeFile::empty())
+                }
+            },
+            async move {
+                let fast_fields_data = segment
+                    .open_read_async(SegmentComponent::FastFields)
+                    .await?;
+                Ok::<_, TantivyError>(FastFieldReaders::open_async(fast_fields_data).await?)
+            },
+            async move {
+                let fieldnorm_data = segment
+                    .open_read_async(SegmentComponent::FieldNorms)
+                    .await?;
+                Ok::<_, TantivyError>(FieldNormReaders::open_async(fieldnorm_data).await?)
+            },
+            async move {
+                if segment.meta().has_deletes() {
+                    let alive_doc_file_slice =
+                        segment.open_read_async(SegmentComponent::Delete).await?;
+                    let alive_doc_data = alive_doc_file_slice.read_bytes_async().await?;
+                    Ok::<_, TantivyError>(Some(AliveBitSet::open(alive_doc_data)))
+                } else {
+                    Ok(None)
+                }
+            }
+        );
 
         fail_point!("SegmentReader::open#middle");
 
-        let postings_file = segment.open_read_async(SegmentComponent::Postings).await?;
-        let postings_composite = CompositeFile::open_async(&postings_file).await?;
-
-        let positions_composite = {
-            if let Ok(positions_file) = segment.open_read_async(SegmentComponent::Positions).await {
-                CompositeFile::open_async(&positions_file).await?
-            } else {
-                CompositeFile::empty()
-            }
-        };
-
-        let schema = segment.schema();
-
-        let fast_fields_data = segment
-            .open_read_async(SegmentComponent::FastFields)
-            .await?;
-        let fast_fields_composite = CompositeFile::open_async(&fast_fields_data).await?;
-        let fast_fields_readers =
-            Arc::new(FastFieldReaders::new(schema.clone(), fast_fields_composite));
-        let fieldnorm_data = segment
-            .open_read_async(SegmentComponent::FieldNorms)
-            .await?;
-        let fieldnorm_readers = FieldNormReaders::open_async(fieldnorm_data).await?;
-
-        let original_bitset = if segment.meta().has_deletes() {
-            let alive_doc_file_slice = segment.open_read_async(SegmentComponent::Delete).await?;
-            let alive_doc_data = alive_doc_file_slice.read_bytes_async().await?;
-            Some(AliveBitSet::open(alive_doc_data))
-        } else {
-            None
-        };
-
-        let alive_bitset_opt = intersect_alive_bitset(original_bitset, custom_bitset);
-
+        let alive_bitset_opt = intersect_alive_bitset(original_bitset?, custom_bitset);
         let max_doc = segment.meta().max_doc();
         let num_docs = alive_bitset_opt
             .as_ref()
@@ -471,16 +484,16 @@ impl SegmentReader {
             inv_idx_reader_cache: Default::default(),
             num_docs,
             max_doc,
-            termdict_composite,
-            postings_composite,
-            fast_fields_readers,
-            fieldnorm_readers,
+            termdict_composite: termdict_composite?,
+            postings_composite: postings_composite?,
+            fast_fields_readers: Arc::new(fast_fields_readers?),
+            fieldnorm_readers: fieldnorm_readers?,
             segment_id: segment.id(),
             delete_opstamp: segment.meta().delete_opstamp(),
-            store_file,
+            store_file: store_file?,
             alive_bitset_opt,
-            positions_composite,
-            schema,
+            positions_composite: positions_composite?,
+            schema: segment.schema(),
         })
     }
 }

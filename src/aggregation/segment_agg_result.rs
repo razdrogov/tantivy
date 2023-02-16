@@ -25,7 +25,7 @@ use crate::{DocId, TantivyError};
 pub(crate) const DOC_BLOCK_SIZE: usize = 64;
 pub(crate) type DocBlock = [DocId; DOC_BLOCK_SIZE];
 
-pub(crate) trait SegmentAggregationCollector: CollectorClone + Debug {
+pub(crate) trait SegmentAggregationCollector: Send + CollectorClone + Debug {
     fn into_intermediate_aggregations_result(
         self: Box<Self>,
         agg_with_accessor: &AggregationsWithAccessor,
